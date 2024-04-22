@@ -26,6 +26,7 @@
 #include <doca_flow.h>
 #include <doca_log.h>
 #include <doca_dpdk.h>
+#include <samples/common.h>
 
 #include <google/protobuf/util/json_util.h>
 #include <grpcpp/server_builder.h>
@@ -56,58 +57,6 @@ static void signal_handler(int signum)
 	}
 }
 
-// Function to check if a given device is capable of executing some task
-typedef doca_error_t (*tasks_check)(struct doca_devinfo *);
-
-/**
- * @brief Invokes doca_dev_open() on the netdev on the given PCI address
- *
- * @pci_addr [in]: The PCI DBDF or BDF address
- * @func [in]: Optional filtering function that checks the capability of matching devices
- * @retval [out]: The handle of the matching, now opened device
- * @return: EXIT_SUCCESS on success and DOCA_ERROR otherwise
- */
-static doca_error_t open_doca_device_with_pci(const char *pci_addr, tasks_check func, struct doca_dev **retval)
-{
-	struct doca_devinfo **dev_list;
-	uint32_t nb_devs;
-	uint8_t is_addr_equal = 0;
-	doca_error_t res;
-	size_t i;
-
-	/* Set default return value */
-	*retval = NULL;
-
-	res = doca_devinfo_create_list(&dev_list, &nb_devs);
-	if (res != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to load doca devices list. Doca_error value: %d", res);
-		return res;
-	}
-
-	/* Search */
-	for (i = 0; i < nb_devs; i++) {
-		res = doca_devinfo_is_equal_pci_addr(dev_list[i], pci_addr, &is_addr_equal);
-		if (res == DOCA_SUCCESS && is_addr_equal) {
-			/* If any special capabilities are needed */
-			if (func != NULL && func(dev_list[i]) != DOCA_SUCCESS)
-				continue;
-
-			/* if device can be opened */
-			res = doca_dev_open(dev_list[i], retval);
-			if (res == DOCA_SUCCESS) {
-				doca_devinfo_destroy_list(dev_list);
-				return res;
-			}
-		}
-	}
-
-	DOCA_LOG_WARN("Matching device not found");
-	res = DOCA_ERROR_NOT_FOUND;
-
-	doca_devinfo_destroy_list(dev_list);
-	return res;
-}
-
 /*
  * @brief PSP Gateway application main function
  *
@@ -121,31 +70,25 @@ int main(int argc, char **argv)
 	int nb_ports = 2;
 	int exit_status = EXIT_SUCCESS;
 
-	struct psp_gw_app_config app_config = {
-		.dpdk_config =
-			{
-				.port_config =
-					{
-						.nb_ports = nb_ports,
-						.nb_queues = 2,
-						.nb_hairpin_q = 2,
-						.enable_mbuf_metadata = true,
-						.isolated_mode = true,
-					},
-				.reserve_main_thread = true,
-			},
-		.pf_repr_indices = strdup("[0]"),
-		.max_tunnels = 128,
-		.net_config =
-			{
-				.hosts = {}, // filled by -t arguments
-				.vc_enabled = true,
-			},
-		.log2_sample_rate = 1,
-		.sample_meta_indicator = 0x43434343,
-		.show_rss_rx_packets = true,
-		.show_rss_durations = true,
-	};
+	struct psp_gw_app_config app_config = {};
+	app_config.dpdk_config.port_config.nb_ports = nb_ports;
+	app_config.dpdk_config.port_config.nb_queues = 2;
+	app_config.dpdk_config.port_config.switch_mode = true;
+	app_config.dpdk_config.port_config.enable_mbuf_metadata = true;
+	app_config.dpdk_config.port_config.isolated_mode = true;
+	app_config.dpdk_config.reserve_main_thread = true;
+	app_config.pf_repr_indices = strdup("[0]");
+	app_config.core_mask = strdup("0x3");
+	app_config.max_tunnels = 128;
+	app_config.net_config.vc_enabled = false;
+	app_config.net_config.crypt_offset = UINT32_MAX;
+	app_config.net_config.default_psp_proto_ver = UINT32_MAX;
+	app_config.log2_sample_rate = 0;
+	app_config.ingress_sample_meta_indicator = 0x65656565; // arbitrary pkt_meta flag value
+	app_config.egress_sample_meta_indicator = 0x43434343;
+	app_config.show_sampled_packets = true;
+	app_config.show_rss_rx_packets = true;
+	app_config.show_rss_durations = false;
 
 	struct psp_pf_dev pf_dev = {};
 	uint16_t vf_port_id;
@@ -175,6 +118,19 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
+	if (app_config.net_config.crypt_offset == UINT32_MAX) {
+		// If not specified by argp, select a default crypt_offset
+		app_config.net_config.crypt_offset =
+			app_config.net_config.vc_enabled ? DEFAULT_CRYPT_OFFSET_VC_ENABLED : DEFAULT_CRYPT_OFFSET;
+		DOCA_LOG_INFO("Selected crypt_offset of %d", app_config.net_config.crypt_offset);
+	}
+
+	if (app_config.net_config.default_psp_proto_ver == UINT32_MAX) {
+		// If not specified by argp, select a default PSP protocol version
+		app_config.net_config.default_psp_proto_ver = DEFAULT_PSP_VERSION;
+		DOCA_LOG_INFO("Selected psp_ver %d", app_config.net_config.default_psp_proto_ver);
+	}
+
 	// init devices
 	result = open_doca_device_with_pci(app_config.pf_pcie_addr.c_str(), nullptr, &pf_dev.dev);
 	if (result != DOCA_SUCCESS) {
@@ -189,7 +145,8 @@ int main(int argc, char **argv)
 				    "dv_xmeta_en=4,"	 // extended flow metadata support
 				    "fdb_def_rule_en=0," // disable default root flow table rule
 				    "vport_match=1,"
-				    "repr_matching_en=0,") +
+				    "repr_matching_en=0,"
+				    "representor=") +
 			app_config.pf_repr_indices; // indicate which representors to probe
 
 	result = doca_dpdk_port_probe(pf_dev.dev, dev_probe_str.c_str());
@@ -233,9 +190,7 @@ int main(int argc, char **argv)
 	if (app_config.run_benchmarks_and_exit) {
 		app_config.max_tunnels = 64 * 1024;
 		doca_log_level_set_global_lower_limit(DOCA_LOG_LEVEL_WARNING);
-	}
 
-	{
 		PSP_GatewayFlows psp_flows(&pf_dev, vf_port_id, &app_config);
 
 		result = psp_flows.init();
@@ -247,64 +202,79 @@ int main(int argc, char **argv)
 
 		if (app_config.run_benchmarks_and_exit) {
 			psp_gw_run_benchmarks(&psp_flows);
+		}
+	} else {
+		PSP_GatewayFlows psp_flows(&pf_dev, vf_port_id, &app_config);
 
-		} else {
-			PSP_GatewayImpl psp_svc(&app_config, &psp_flows);
+		result = psp_flows.init();
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to create flow pipes");
+			exit_status = EXIT_FAILURE;
+			goto dpdk_destroy;
+		}
 
-			struct lcore_params lcore_params = {
-				&force_quit,
-				&app_config,
-				&psp_flows,
-				&psp_svc,
-			};
+		PSP_GatewayImpl psp_svc(&app_config, &psp_flows);
 
-			uint32_t lcore_id;
-			RTE_LCORE_FOREACH_WORKER(lcore_id)
-			{
-				rte_eal_remote_launch(lcore_pkt_proc_func, &lcore_params, lcore_id);
+		struct lcore_params lcore_params = {
+			&force_quit,
+			&app_config,
+			&pf_dev,
+			&psp_flows,
+			&psp_svc,
+		};
+
+		uint32_t lcore_id;
+		RTE_LCORE_FOREACH_WORKER(lcore_id)
+		{
+			rte_eal_remote_launch(lcore_pkt_proc_func, &lcore_params, lcore_id);
+		}
+
+		std::string server_address = app_config.local_svc_addr;
+		if (server_address.empty()) {
+			server_address = "0.0.0.0";
+		}
+		if (server_address.find(":") == std::string::npos) {
+			server_address += ":" + std::to_string(PSP_GatewayImpl::DEFAULT_HTTP_PORT_NUM);
+		}
+		grpc::ServerBuilder builder;
+		builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+		builder.RegisterService(&psp_svc);
+		auto server_instance = builder.BuildAndStart();
+		std::cout << "Server listening on " << server_address << std::endl;
+
+		// If configured to create all tunnels at startup, create a list of
+		// pending tunnels here. Each invocation of try_connect will
+		// remove entries from the list as tunnels are created.
+		// Otherwise, this list will be left empty and tunnels will be created
+		// on demand via the miss path.
+		std::vector<psp_gw_host> remotes_to_connect;
+		rte_be32_t local_vf_addr = 0;
+		if (app_config.create_tunnels_at_startup) {
+			if (inet_pton(AF_INET, app_config.local_vf_addr.c_str(), &local_vf_addr) != 1) {
+				DOCA_LOG_ERR("Invalid local_vf_addr: %s", app_config.local_vf_addr.c_str());
+				exit_status = EXIT_FAILURE;
+				goto dpdk_destroy;
 			}
+			remotes_to_connect = app_config.net_config.hosts;
+		}
 
-			std::string server_address = app_config.local_svc_addr;
-			if (server_address.empty()) {
-				server_address = "0.0.0.0";
-			}
-			if (server_address.find(":") == std::string::npos) {
-				server_address += ":" + std::to_string(PSP_GatewayImpl::DEFAULT_HTTP_PORT_NUM);
-			}
-			grpc::ServerBuilder builder;
-			builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
-			builder.RegisterService(&psp_svc);
-			auto server_instance = builder.BuildAndStart();
-			std::cout << "Server listening on " << server_address << std::endl;
+		while (!force_quit) {
+			psp_svc.try_connect(remotes_to_connect, local_vf_addr);
+			sleep(1);
 
-			// If configured to create all tunnels at startup, create a list of
-			// pending tunnels here. Each invocation of try_connect will
-			// remove entries from the list as tunnels are created.
-			// Otherwise, this list will be left empty and tunnels will be created
-			// on demand via the miss path.
-			std::vector<psp_gw_host> remotes_to_connect;
-			if (app_config.create_tunnels_at_startup) {
-				remotes_to_connect = app_config.net_config.hosts;
-			}
+			psp_flows.show_static_flow_counts();
+			psp_svc.show_flow_counts();
+		}
 
-			while (!force_quit) {
-				psp_svc.try_connect(remotes_to_connect);
-				sleep(1);
+		DOCA_LOG_INFO("Shutting down");
 
-				psp_flows.show_static_flow_counts();
-				psp_svc.show_flow_counts();
-			}
+		server_instance->Shutdown();
+		server_instance.reset();
 
-			DOCA_LOG_INFO("Shutting down");
-
-			server_instance->Shutdown();
-			server_instance.reset();
-
-			RTE_LCORE_FOREACH_WORKER(lcore_id)
-			{
-				DOCA_LOG_INFO("Stopping L-Core %d", lcore_id);
-				rte_eal_wait_lcore(lcore_id);
-			}
+		RTE_LCORE_FOREACH_WORKER(lcore_id)
+		{
+			DOCA_LOG_INFO("Stopping L-Core %d", lcore_id);
+			rte_eal_wait_lcore(lcore_id);
 		}
 	}
 

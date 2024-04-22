@@ -14,9 +14,11 @@
 #ifndef _PSP_GW_FLOWS_H_
 #define _PSP_GW_FLOWS_H_
 
-#include <rte_ether.h>
+#include <set>
 #include <string>
 #include <vector>
+
+#include <rte_ether.h>
 
 #include <doca_types.h>
 #include <dpdk_utils.h>
@@ -25,7 +27,16 @@
 // 1: PSP Header Version 0, AES-GCM-256
 // 2: PSP Header Version 0, AES-GMAC-128
 // 3: PSP Header Version 0, AES-GMAC-256
-static constexpr uint32_t SUPPORTED_PSP_VER = 1;
+inline const std::set<uint32_t> SUPPORTED_PSP_VERSIONS = {0, 1};
+static const uint32_t DEFAULT_PSP_VERSION = 1;
+
+// "The offset from the end of the Initialization Vector to
+// the start of the encrypted portion of the payload,
+// measured in 4-octet units."
+// By default, leave the inner IPv4 header in cleartext.
+// Add 2 if the 64-bit VC is enabled.
+static constexpr uint32_t DEFAULT_CRYPT_OFFSET = 5;
+static constexpr uint32_t DEFAULT_CRYPT_OFFSET_VC_ENABLED = 7;
 
 static constexpr uint32_t IPV6_ADDR_LEN = 16;
 typedef uint8_t ipv6_addr_t[IPV6_ADDR_LEN];
@@ -38,8 +49,9 @@ typedef uint8_t ipv6_addr_t[IPV6_ADDR_LEN];
  * could be extended to a list of PFs.
  */
 struct psp_gw_host {
-	doca_be32_t vip;    /*!< virtual IP address, one per host PF */
-	doca_be32_t svc_ip; /*!< control plane gRPC service address */
+	uint32_t psp_proto_ver; /*!< 0 for 128-bit AES-GCM, 1 for 256-bit */
+	doca_be32_t vip;	/*!< virtual IP address, one per host PF */
+	doca_be32_t svc_ip;	/*!< control plane gRPC service address */
 };
 
 /**
@@ -49,7 +61,9 @@ struct psp_gw_host {
 struct psp_gw_net_config {
 	std::vector<psp_gw_host> hosts; //!< The list of participating hosts and their interfaces
 
-	bool vc_enabled; //!< Whether Virtualization Cookies shall be included in the PSP headers
+	bool vc_enabled;		//!< Whether Virtualization Cookies shall be included in the PSP headers
+	uint32_t crypt_offset;		//!< The number of words to skip when performing encryption
+	uint32_t default_psp_proto_ver; /*!< 0 for 128-bit AES-GCM, 1 for 256-bit */
 };
 
 /**
@@ -61,8 +75,15 @@ struct psp_gw_app_config {
 
 	std::string pf_pcie_addr;    //!< PCI domain:bus:device:function string of the host PF
 	std::string pf_repr_indices; //!< Representor list string, such  as vf0 or pf[0-1]
+	std::string core_mask;	     //!< EAL core mask
 
 	std::string local_svc_addr; //!< The IPv4 addr (and optional port number) of the locally running gRPC service.
+	std::string local_vf_addr;  //!< The IPv4 IP address of the VF; required for create_tunnels_at_startup
+
+	rte_ether_addr dcap_dmac; //!< The dst mac to apply on decap
+
+	bool nexthop_enable;	     //!< Whether to override the dmac in the tunnel request with a nexthop mac addr
+	rte_ether_addr nexthop_dmac; //!< The dst mac to apply on encap, if enabled
 
 	uint32_t max_tunnels; //!< The maximum number of outgoing tunnel connections supported on this host
 
@@ -82,11 +103,14 @@ struct psp_gw_app_config {
 	 */
 	uint16_t log2_sample_rate;
 
-	uint32_t sample_meta_indicator;
+	uint32_t ingress_sample_meta_indicator; //!< Value to assign pkt_meta when sampling incoming packets
+	uint32_t egress_sample_meta_indicator;	//!< Value to assign pkt_meta when sampling outgoing packets
 
 	bool create_tunnels_at_startup; //!< Create PSP tunnels at startup vs. on demand
+	bool show_sampled_packets;	//!< Display to the console any packets marked for sampling
 	bool show_rss_rx_packets;	//!< Display to the console any packets received via RSS
 	bool show_rss_durations;	//!< Display performance information for RSS processing
+	bool disable_ingress_acl;	//!< Allow any ingress packet that successfully decrypts
 	bool debug_keys;		//!< Print the contents of PSP encryption keys to the console
 	bool run_benchmarks_and_exit;	//!< Run PSP performance benchmarks; do not run the gRPC service.
 };

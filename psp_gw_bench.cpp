@@ -20,6 +20,7 @@
 #include <rte_cycles.h>
 
 #include <psp_gw_bench.h>
+#include <psp_gw_config.h>
 #include <psp_gw_flows.h>
 
 DOCA_LOG_REGISTER(PSP_BENCH);
@@ -43,10 +44,6 @@ static doca_error_t execute_psp_flow_create_loop(size_t loops, PSP_GatewayFlows 
 		.dst_mac = {{0x11, 0x12, 0x13, 0x14, 0x15, 0x16}},
 		.dst_pip =
 			{0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f},
-		.dst_vip = 0x0,
-		.spi = 0x0,
-		.crypto_id = 0x1,
-		.vc = 0x0,
 	};
 	uint32_t encrypt_key[256 / 32] = {};
 
@@ -54,8 +51,11 @@ static doca_error_t execute_psp_flow_create_loop(size_t loops, PSP_GatewayFlows 
 
 	for (size_t i = 0; i < loops && !force_quit; i++) {
 		session.dst_vip = RTE_BE32(i + 0x10101010);
-		session.spi = i + 1000;
-		session.crypto_id = 1;
+		session.spi_ingress = i + 1000;
+		session.spi_egress = i + 2000;
+		session.src_vip = RTE_BE32(i + 0xA0A0A000);
+		session.dst_vip = RTE_BE32(i + 0xA0A0B000);
+		session.crypto_id = i + 1;
 		session.vc = 0x8000000000000000 + (i << 32) + i;
 		result = psp_flows->add_encrypt_entry(&session, encrypt_key);
 

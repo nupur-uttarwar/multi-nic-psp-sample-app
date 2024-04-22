@@ -52,15 +52,19 @@ struct psp_session_t {
 
 	ipv6_addr_t dst_pip; //!< Physical/Outer IP addr
 	doca_be32_t dst_vip; //!< Virtual/Innter IP addr
+	doca_be32_t src_vip; //!< Virtual/Innter IP addr
 
-	uint32_t spi;	    //!< Security Parameter Index on the wire
-	uint32_t crypto_id; //!< Internal shared-resource index
+	uint32_t spi_egress;  //!< Security Parameter Index on the wire - host-to-net
+	uint32_t spi_ingress; //!< Security Parameter Index on the wire - net-to-host
+	uint32_t crypto_id;   //!< Internal shared-resource index
 
-	uint64_t vc; //!< Virtualization cookie, if enabled
+	uint32_t psp_proto_ver; //!< PSP protocol version used by this session
+	uint64_t vc;		//!< Virtualization cookie, if enabled
 
-	doca_flow_pipe_entry *encap_entry;
-	doca_flow_pipe_entry *encrypt_entry;
-	uint64_t pkt_count;
+	doca_flow_pipe_entry *encap_encrypt_entry;
+	doca_flow_pipe_entry *acl_entry;
+	uint64_t pkt_count_egress;  //!< count of encap_encrypt_entry
+	uint64_t pkt_count_ingress; //!< count of acl_entry
 };
 
 /**
@@ -113,6 +117,15 @@ public:
 	doca_error_t add_encrypt_entry(psp_session_t *session, const void *encrypt_key);
 
 	/**
+	 * @brief Adds an ingress ACL entry for the given session to accept
+	 *        the combination of src_vip and SPI.
+	 *
+	 * @session [in]: the session for which an ingress ACL flow should be created
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t add_ingress_acl_entry(psp_session_t *session);
+
+	/**
 	 * @brief Removes the indicated flow entry.
 	 *
 	 * @session [in]: The session whose associated flows should be removed
@@ -136,6 +149,11 @@ public:
 	void show_session_flow_count(const std::string &dst_vip, psp_session_t &session);
 
 private:
+	/**
+	 * @brief Private structure used to display flow query results
+	 */
+	struct pipe_query;
+
 	/**
 	 * @brief Callback which is invoked to check the status of every entry
 	 *        added to a flow pipe. See doca_flow_entry_process_cb.
@@ -268,13 +286,6 @@ private:
 	doca_error_t egress_sampling_pipe_create(void);
 
 	/**
-	 * Creates the encryption pipe
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t egress_encrypt_pipe_create(void);
-
-	/**
 	 * Creates the entry point to the CPU Rx queues
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
@@ -289,6 +300,33 @@ private:
 	 */
 	doca_error_t ingress_root_pipe_create(void);
 
+	/**
+	 * @brief Creates a pipe whose only purpose is to relay
+	 * flows from the egress domain to the secure-egress domain.
+	 *
+	 * @next_pipe [in]: The pipe to which the empty pipe
+	 * should forward its traffic.
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t empty_pipe_create(doca_flow_pipe *next_pipe);
+
+	/**
+	 * @brief Creates a pipe to fwd packets to port
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t empty_pipe_create_not_sampled(void);
+
+	/**
+	 * @brief Performs a flow query and logs the result.
+	 *
+	 * @query [in]: The pipe and/or entries to query
+	 * @suppress_output [in]: Whether to log the query results or
+	 * simply count them
+	 * @return: A pair of counters (hits, misses)
+	 */
+	std::pair<uint64_t, uint64_t> perform_pipe_query(pipe_query *query, bool suppress_output);
+
 	// Application state data:
 
 	psp_gw_app_config *app_config{};
@@ -298,6 +336,8 @@ private:
 	uint16_t vf_port_id{UINT16_MAX};
 
 	doca_flow_port *vf_port{};
+
+	bool sampling_enabled{false};
 
 	// Pipe and pipe entry application state:
 
@@ -315,6 +355,8 @@ private:
 	doca_flow_pipe *egress_sampling_pipe{};
 	doca_flow_pipe *egress_encrypt_pipe{};
 	doca_flow_pipe *syndrome_stats_pipe{};
+	doca_flow_pipe *empty_pipe{};
+	doca_flow_pipe *empty_pipe_not_sampled{};
 
 	// static pipe entries
 	doca_flow_pipe_entry *default_rss_entry{};
@@ -322,12 +364,18 @@ private:
 	doca_flow_pipe_entry *default_ingr_sampling_entry{};
 	doca_flow_pipe_entry *default_ingr_acl_entry{};
 	doca_flow_pipe_entry *default_egr_sampling_entry{};
+	doca_flow_pipe_entry *root_jump_to_ingress_entry{};
+	doca_flow_pipe_entry *root_jump_to_egress_entry{};
 	doca_flow_pipe_entry *vf_arp_to_rss{};
 	doca_flow_pipe_entry *syndrome_stats_entries[NUM_OF_PSP_SYNDROMES]{};
+	doca_flow_pipe_entry *empty_pipe_entry{};
+
+	// commonly used setting to enable per-entry counters
+	struct doca_flow_monitor monitor_count {};
 
 	// Shared resource IDs
-	uint32_t ingress_mirror_id{};
-	uint32_t egress_mirror_id{};
+	uint32_t mirror_res_id{1};
+	uint32_t mirror_res_id_port{2};
 
 	// Sum of all static pipe entries the last time
 	// show_static_flow_counts() was invoked.

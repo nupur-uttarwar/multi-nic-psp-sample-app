@@ -22,10 +22,11 @@ class PSP_GatewayImpl;
  * @brief The parameters needed by each L-Core's main loop.
  */
 struct lcore_params {
-	volatile bool *force_quit;	  /*!< Indicates the application has been requested to quit */
-	struct psp_gw_app_config *config; /*!< Contains configuration information */
-	PSP_GatewayFlows *psp_flows;	  /*!< The doca flow objects */
-	PSP_GatewayImpl *psp_svc;	  /*!< The RPC service which manages tunnels */
+	volatile bool *force_quit;   /*!< Indicates the application has been requested to quit */
+	psp_gw_app_config *config;   /*!< Contains configuration information */
+	psp_pf_dev *pf_dev;	     /*!< The PF device to poll */
+	PSP_GatewayFlows *psp_flows; /*!< The doca flow objects */
+	PSP_GatewayImpl *psp_svc;    /*!< The RPC service which manages tunnels */
 };
 
 /**

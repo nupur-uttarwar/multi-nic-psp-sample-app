@@ -31,7 +31,9 @@ endif
 app_dependencies = [dependency_libdpdk]
 app_dependencies += dependency('json-c', required : true)
 app_dependencies += dependency('threads', required : true)
-app_dependencies += dependency('doca', required : true)
+
+dependency_doca = dependency('doca', required : true)
+app_dependencies += dependency_doca
 
 dependency_protobuf = dependency('protobuf', required : true)
 dependency_grpc = dependency('grpc++', required : true)
@@ -41,10 +43,11 @@ subdir('grpc')
 app_dependencies += grpc_dependencies
 app_dependencies += dependency_psp_gateway_grpc
 
-common_dir_path = '/opt/mellanox/doca/applications/common/src'
-samples_dir_path = '/opt/mellanox/doca/samples'
+doca_root_dir = dependency_doca.get_variable('prefix', default_value: '/opt/mellanox/doca')
 
-app_inc_dirs = [include_directories(common_dir_path)]
+common_dir_path = doca_root_dir + '/applications/common'
+
+app_inc_dirs = [include_directories(common_dir_path, doca_root_dir)]
 
 app_srcs = files([
 	APP_NAME + '.cpp',
@@ -58,7 +61,7 @@ app_srcs = files([
 	common_dir_path + '/pack.c',
 	common_dir_path + '/utils.c',
 	common_dir_path + '/flow_parser.c',
-	samples_dir_path + '/common.c',
+	doca_root_dir + '/samples/common.c',
 ])
 
 executable(DOCA_PREFIX + APP_NAME, app_srcs,

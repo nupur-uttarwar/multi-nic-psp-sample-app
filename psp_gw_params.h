@@ -18,6 +18,8 @@
 #include <vector>
 #include <doca_error.h>
 
+struct psp_gw_app_config;
+
 /**
  * @brief Parses command-line arguments to the application.
  * During processing of arguments, both DPDK and the application

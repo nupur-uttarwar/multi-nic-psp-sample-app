@@ -18,6 +18,7 @@
 #include <doca_log.h>
 
 #include <psp_gw_config.h>
+#include <psp_gw_flows.h>
 #include <psp_gw_pkt_rss.h>
 #include <psp_gw_svc_impl.h>
 
@@ -41,15 +42,26 @@ static uint16_t max_tx_retries = 10;
 static void handle_packet(struct lcore_params *params, uint16_t port_id, uint16_t queue_id, struct rte_mbuf *packet)
 {
 	uint32_t pkt_meta = rte_flow_dynf_metadata_get(packet);
-	if (pkt_meta == params->config->sample_meta_indicator) {
-		printf("SAMPLED PACKET: port %d, queue_id %d, pkt_meta 0x%x\n", port_id, queue_id, pkt_meta);
-		rte_pktmbuf_dump(stdout, packet, packet->data_len);
-	} else if (params->config->show_rss_rx_packets) {
-		printf("RSS: Received port %d, queue_id %d, pkt_meta 0x%x\n", port_id, queue_id, pkt_meta);
-		rte_pktmbuf_dump(stdout, packet, packet->data_len);
-	}
+	bool is_ingress_sampled = pkt_meta == params->config->ingress_sample_meta_indicator;
+	bool is_egress_sampled = pkt_meta == params->config->egress_sample_meta_indicator;
+	if (is_ingress_sampled || is_egress_sampled) {
+		if (params->config->show_sampled_packets) {
+			DOCA_LOG_INFO("SAMPLED PACKET: port %d, queue_id %d, pkt_meta 0x%x, %s",
+				      port_id,
+				      queue_id,
+				      pkt_meta,
+				      is_ingress_sampled ? "INGRESS" : "EGRESS");
+			rte_pktmbuf_dump(stdout, packet, packet->data_len);
+		}
+		// sampled packets are NOT sent to the rpc service
+	} else {
+		if (params->config->show_rss_rx_packets) {
+			DOCA_LOG_INFO("RSS: Received port %d, queue_id %d, pkt_meta 0x%x", port_id, queue_id, pkt_meta);
+			rte_pktmbuf_dump(stdout, packet, packet->data_len);
+		}
 
-	params->psp_svc->handle_miss_packet(packet);
+		params->psp_svc->handle_miss_packet(packet);
+	}
 }
 
 int lcore_pkt_proc_func(void *lcore_args)
@@ -72,28 +84,27 @@ int lcore_pkt_proc_func(void *lcore_args)
 	DOCA_LOG_INFO("L-Core %d polling queue %d (all ports)", lcore_id, queue_id);
 
 	while (!*params->force_quit) {
-		for (uint16_t port_id = 0; port_id < rte_eth_dev_count_avail() && !*params->force_quit; port_id++) {
-			uint64_t t_start = rte_rdtsc();
+		uint16_t port_id = params->pf_dev->port_id;
+		uint64_t t_start = rte_rdtsc();
 
-			uint16_t nb_rx_packets = rte_eth_rx_burst(port_id, queue_id, rx_packets, MAX_RX_BURST_SIZE);
+		uint16_t nb_rx_packets = rte_eth_rx_burst(port_id, queue_id, rx_packets, MAX_RX_BURST_SIZE);
 
-			if (!nb_rx_packets)
-				continue;
+		if (!nb_rx_packets)
+			continue;
 
-			for (int i = 0; i < nb_rx_packets && !*params->force_quit; i++) {
-				handle_packet(params, port_id, queue_id, rx_packets[i]);
-			}
+		for (int i = 0; i < nb_rx_packets && !*params->force_quit; i++) {
+			handle_packet(params, port_id, queue_id, rx_packets[i]);
+		}
 
-			rte_pktmbuf_free_bulk(rx_packets, nb_rx_packets);
+		rte_pktmbuf_free_bulk(rx_packets, nb_rx_packets);
 
-			if (params->config->show_rss_durations) {
-				double sec = (double)(rte_rdtsc() - t_start) * tsc_to_seconds;
-				printf("L-Core %d port %d: processed %d packets in %f seconds\n",
-				       lcore_id,
-				       port_id,
-				       nb_rx_packets,
-				       sec);
-			}
+		if (params->config->show_rss_durations) {
+			double sec = (double)(rte_rdtsc() - t_start) * tsc_to_seconds;
+			DOCA_LOG_INFO("L-Core %d port %d: processed %d packets in %f seconds",
+				      lcore_id,
+				      port_id,
+				      nb_rx_packets,
+				      sec);
 		}
 	}
 	DOCA_LOG_INFO("L-Core %d exiting", lcore_id);
@@ -114,5 +125,6 @@ bool reinject_packet(struct rte_mbuf *packet, uint16_t port_id)
 	for (uint16_t i = 0; i < max_tx_retries && nsent < 1; i++) {
 		nsent = rte_eth_tx_burst(port_id, queue_id, &packet, 1);
 	}
+	DOCA_LOG_INFO("Reinjected packet on port %d", port_id);
 	return nsent == 1;
 }

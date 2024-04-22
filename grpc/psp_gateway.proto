@@ -10,8 +10,8 @@
  * provided with the software product.
  *
  */
- 
- syntax = "proto3";
+
+syntax = "proto3";
 
 package psp_gateway;
 
@@ -50,14 +50,13 @@ message NewTunnelResponse
     TunnelParameters params = 2;
 }
 
-message NewMasterKeyRequest
+message KeyRotationRequest
 {
     uint64 request_id = 1; // unique per host
-
-    TunnelParameters replacement_params = 5; // for future traffic to requester
+    bool issue_new_keys = 2;
 }
 
-message NewMasterKeyResponse
+message KeyRotationResponse
 {
     uint64 request_id = 1;
 }
@@ -68,8 +67,8 @@ service PSP_Gateway
     // so that the initiator can begin sending encrypted traffic.
     rpc RequestTunnelParams(NewTunnelRequest) returns (NewTunnelResponse);
 
-    // Indicates that the initiator has nearly exhuasted the range
-    // or time window of its master key, and all peers should call
-    // RequestTunnelParams() to create new tunnels.
-    rpc NotifyMasterKeyRotated(NewMasterKeyRequest) returns (NewMasterKeyResponse);
+    // Requests that the master key be rotated.
+    // All active keys become deprecated but continue to work.
+    // All previously deprecated keys are invalidated.
+    rpc RequestKeyRotation(KeyRotationRequest) returns (KeyRotationResponse);
 }
