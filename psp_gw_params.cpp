@@ -310,6 +310,22 @@ static doca_error_t handle_benchmark_param(void *param, void *config)
 }
 
 /**
+ * @brief Indicates the application should enable packet spray across SPIs
+ *
+ * @param [in]: A pointer to a boolean flag
+ * @config [in/out]: A void pointer to the application config struct
+ * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
+ */
+static doca_error_t handle_spray_param(void *param, void *config)
+{
+	auto *app_config = (struct psp_gw_app_config *)config;
+	bool *bool_param = (bool *)param;
+	app_config->enable_packet_spray = *bool_param;
+	DOCA_LOG_INFO("Enable packet spray %s", *bool_param ? "Enabled" : "Disabled");
+	return DOCA_SUCCESS;
+}
+
+/**
  * @brief Indicates the application should skip ACL checks on ingress
  *
  * @param [in]: A pointer to a boolean flag
@@ -675,6 +691,16 @@ static doca_error_t psp_gw_register_params(void)
 					      "benchmark",
 					      "Run PSP Benchmarks and exit",
 					      handle_benchmark_param,
+					      DOCA_ARGP_TYPE_BOOLEAN,
+					      false,
+					      false);
+	if (result != DOCA_SUCCESS)
+		return result;
+
+	result = psp_gw_register_single_param(nullptr,
+					      "spray",
+					      "Spray packets across SPI tunnels",
+					      handle_spray_param,
 					      DOCA_ARGP_TYPE_BOOLEAN,
 					      false,
 					      false);

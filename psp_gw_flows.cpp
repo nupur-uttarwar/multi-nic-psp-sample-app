@@ -225,6 +225,11 @@ doca_error_t PSP_GatewayFlows::create_pipes(void)
 	doca_error_t result = DOCA_SUCCESS;
 
 	IF_SUCCESS(result, syndrome_stats_pipe_create());
+
+	if (app_config->enable_packet_spray) {
+		IF_SUCCESS(result, ingress_packet_spray_pipe_create());
+	}
+
 	IF_SUCCESS(result, ingress_acl_pipe_create());
 
 	if (sampling_enabled) {
@@ -238,7 +243,12 @@ doca_error_t PSP_GatewayFlows::create_pipes(void)
 		IF_SUCCESS(result, egress_sampling_pipe_create());
 	}
 	IF_SUCCESS(result, egress_acl_pipe_create());
-	IF_SUCCESS(result, empty_pipe_create(egress_acl_pipe));
+
+	if (app_config->enable_packet_spray) {
+		IF_SUCCESS(result, egress_packet_spray_pipe_create());
+	} else {
+		IF_SUCCESS(result, empty_pipe_create(egress_acl_pipe));
+	}
 
 	IF_SUCCESS(result, ingress_root_pipe_create());
 
@@ -397,6 +407,59 @@ doca_error_t PSP_GatewayFlows::ingress_sampling_pipe_create(void)
 	return result;
 }
 
+doca_error_t PSP_GatewayFlows::ingress_packet_spray_pipe_create(void)
+{
+	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
+	assert(app_config->enable_packet_spray);
+	assert(app_config->local_vf_addr.length());
+	doca_error_t result = DOCA_SUCCESS;
+
+	rte_be32_t local_vf_addr;
+	if (inet_pton(AF_INET, app_config->local_vf_addr.c_str(), &local_vf_addr) != 1) {
+		DOCA_LOG_ERR("Invalid local_vf_addr: %s", app_config->local_vf_addr.c_str());
+		return DOCA_ERROR_INVALID_VALUE;
+	}
+
+	doca_flow_match match = {};
+
+	doca_flow_actions actions = {};
+	actions.outer.l3_type = DOCA_FLOW_L3_TYPE_IP4;
+	actions.outer.ip4.dst_ip = UINT32_MAX;
+
+	doca_flow_actions *actions_arr[] = {&actions};
+
+	doca_flow_fwd fwd = {};
+	fwd.type = DOCA_FLOW_FWD_PORT;
+	fwd.port_id = vf_port_id;
+
+	doca_flow_pipe_cfg *pipe_cfg;
+	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev->port_obj));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_name(pipe_cfg, "INGR_SPRAY"));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, 1));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_dir_info(pipe_cfg, DOCA_FLOW_DIRECTION_NETWORK_TO_HOST));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &match, nullptr));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_actions(pipe_cfg, actions_arr, nullptr, nullptr, 1));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_monitor(pipe_cfg, &monitor_count));
+	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd, nullptr, &ingress_packet_spray_pipe));
+
+	if (pipe_cfg) {
+		doca_flow_pipe_cfg_destroy(pipe_cfg);
+	}
+
+	actions.outer.ip4.dst_ip = local_vf_addr;
+	IF_SUCCESS(result,
+		   add_single_entry(0,
+				    ingress_packet_spray_pipe,
+				    pf_dev->port_obj,
+				    nullptr,
+				    &actions,
+				    nullptr,
+				    nullptr,
+				    &default_ingr_packet_spray_entry));
+
+	return result;
+}
+
 doca_error_t PSP_GatewayFlows::ingress_acl_pipe_create(void)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
@@ -425,8 +488,13 @@ doca_error_t PSP_GatewayFlows::ingress_acl_pipe_create(void)
 	doca_flow_actions *actions_arr[] = {&actions};
 
 	doca_flow_fwd fwd = {};
-	fwd.type = DOCA_FLOW_FWD_PORT;
-	fwd.port_id = vf_port_id;
+	if (app_config->enable_packet_spray) {
+		fwd.type = DOCA_FLOW_FWD_PIPE;
+		fwd.next_pipe = ingress_packet_spray_pipe;
+	} else {
+		fwd.type = DOCA_FLOW_FWD_PORT;
+		fwd.port_id = vf_port_id;
+	}
 
 	doca_flow_fwd fwd_miss = {};
 	fwd_miss.type = DOCA_FLOW_FWD_PIPE;
@@ -532,6 +600,85 @@ doca_error_t PSP_GatewayFlows::syndrome_stats_pipe_create(void)
 					    &monitor_count,
 					    nullptr,
 					    &syndrome_stats_entries[i]));
+	}
+
+	return result;
+}
+
+doca_error_t PSP_GatewayFlows::egress_packet_spray_pipe_create(void)
+{
+	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
+	assert(app_config->enable_packet_spray);
+	assert(egress_acl_pipe);
+	assert(!app_config->net_config.hosts.empty());
+	doca_error_t result = DOCA_SUCCESS;
+
+	doca_flow_match match = {};
+	match.outer.l4_type_ext = DOCA_FLOW_L4_TYPE_EXT_UDP;
+	match.outer.udp.l4_port.src_port = UINT16_MAX;
+
+	doca_flow_actions actions = {};
+	actions.outer.l3_type = DOCA_FLOW_L3_TYPE_IP4;
+	actions.outer.ip4.dst_ip = UINT32_MAX;
+
+	doca_flow_actions *actions_arr[] = {&actions};
+
+	doca_flow_fwd fwd = {};
+	fwd.type = DOCA_FLOW_FWD_PIPE;
+	fwd.next_pipe = egress_acl_pipe;
+
+	doca_flow_pipe_cfg *pipe_cfg;
+	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev->port_obj));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_name(pipe_cfg, "EGR_SPRAY"));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_domain(pipe_cfg, DOCA_FLOW_PIPE_DOMAIN_EGRESS));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_type(pipe_cfg, DOCA_FLOW_PIPE_HASH));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, app_config->max_tunnels));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_dir_info(pipe_cfg, DOCA_FLOW_DIRECTION_HOST_TO_NETWORK));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &match, &match));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_actions(pipe_cfg, actions_arr, nullptr, nullptr, 1));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_monitor(pipe_cfg, &monitor_count));
+	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd, nullptr, &egress_packet_spray_pipe));
+
+	if (pipe_cfg) {
+		doca_flow_pipe_cfg_destroy(pipe_cfg);
+	}
+
+	for (size_t i = 0; i < app_config->max_tunnels && result == DOCA_SUCCESS; i++) {
+		size_t host_idx = i % app_config->net_config.hosts.size();
+		const auto &host = app_config->net_config.hosts[host_idx];
+		actions.outer.ip4.dst_ip = host.vip;
+
+		doca_flow_pipe_entry *entry;
+
+		int num_of_entries = 1;
+		doca_flow_flags_type flags = DOCA_FLOW_NO_WAIT;
+
+		entries_status status = {};
+		status.entries_in_queue = num_of_entries;
+
+		std::string dst_ip = ipv4_to_string(actions.outer.ip4.dst_ip);
+		DOCA_LOG_DBG("Egress hash 0x%x -> %s", (uint32_t)i, dst_ip.c_str());
+		IF_SUCCESS(result,
+			   doca_flow_pipe_hash_add_entry(0,
+							 egress_packet_spray_pipe,
+							 i,
+							 &actions,
+							 &monitor_count,
+							 nullptr,
+							 flags,
+							 &status,
+							 &entry));
+
+		IF_SUCCESS(result, doca_flow_entries_process(pf_dev->port_obj, 0, DEFAULT_TIMEOUT_US, num_of_entries));
+
+		egr_packet_spray_entries.push_back(entry);
+
+		if (status.nb_processed != num_of_entries || status.failure) {
+			DOCA_LOG_ERR("Failed to process entry; nb_processed = %d, failure = %d",
+				     status.nb_processed,
+				     status.failure);
+			result = DOCA_ERROR_BAD_STATE;
+		}
 	}
 
 	return result;
@@ -902,7 +1049,8 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 
 	doca_flow_fwd fwd_egress = {};
 	fwd_egress.type = DOCA_FLOW_FWD_PIPE;
-	fwd_egress.next_pipe = empty_pipe; // and then to egress_acl_pipe
+	fwd_egress.next_pipe = app_config->enable_packet_spray ? egress_packet_spray_pipe :
+								 empty_pipe; // and then to egress_acl_pipe
 
 	doca_flow_fwd fwd_rss = {};
 	fwd_rss.type = DOCA_FLOW_FWD_PIPE;
@@ -1075,9 +1223,18 @@ void PSP_GatewayFlows::show_static_flow_counts(void)
 	queries.emplace_back(pipe_query{ingress_decrypt_pipe, default_decrypt_entry, "ingress_decrypt_pipe"});
 	queries.emplace_back(pipe_query{ingress_sampling_pipe, default_ingr_sampling_entry, "ingress_sampling_pipe"});
 	queries.emplace_back(pipe_query{ingress_acl_pipe, default_ingr_acl_entry, "ingress_acl_pipe"});
+	queries.emplace_back(pipe_query{nullptr, default_ingr_packet_spray_entry, "ingress_pkt_spray"});
+
 	for (int i = 0; i < NUM_OF_PSP_SYNDROMES; i++) {
 		queries.emplace_back(
 			pipe_query{nullptr, syndrome_stats_entries[i], "syndrome[" + std::to_string(i) + "]"});
+	}
+	if (false && app_config->enable_packet_spray) {
+		for (size_t i = 0; i < egr_packet_spray_entries.size(); i++) {
+			queries.emplace_back(pipe_query{nullptr,
+							egr_packet_spray_entries[i],
+							"egr_spray[" + std::to_string(i) + "]"});
+		}
 	}
 	queries.emplace_back(pipe_query{nullptr, empty_pipe_entry, "egress_root"});
 	queries.emplace_back(pipe_query{egress_acl_pipe, nullptr, "egress_acl_pipe"});

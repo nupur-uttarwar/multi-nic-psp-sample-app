@@ -113,6 +113,7 @@ struct psp_gw_app_config {
 	bool disable_ingress_acl;	//!< Allow any ingress packet that successfully decrypts
 	bool debug_keys;		//!< Print the contents of PSP encryption keys to the console
 	bool run_benchmarks_and_exit;	//!< Run PSP performance benchmarks; do not run the gRPC service.
+	bool enable_packet_spray; //!< Spread 1-to-1 traffic across many SPIs
 };
 
 #endif // _PSP_GW_CONFIG_H_

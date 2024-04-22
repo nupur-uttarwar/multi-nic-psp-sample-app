@@ -264,6 +264,14 @@ private:
 	doca_error_t ingress_acl_pipe_create(void);
 
 	/**
+	 * Creates the pipe that maps the "sprayed" IP addresses
+	 * back to the expected IP address of the VF.
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t ingress_packet_spray_pipe_create(void);
+
+	/**
 	 * Creates the pipe which counts the various syndrome types
 	 * and drops the packets
 	 *
@@ -277,6 +285,14 @@ private:
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
 	doca_error_t egress_acl_pipe_create(void);
+
+	/**
+	 * Creates the pipe to "spray" traffic to different SPIs by
+	 * re-writing the IP address to one of the configured destinations.
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t egress_packet_spray_pipe_create(void);
 
 	/**
 	 * Creates the pipe to mark and randomly sample outgoing packets
@@ -349,8 +365,10 @@ private:
 	doca_flow_pipe *ingress_decrypt_pipe{};
 	doca_flow_pipe *ingress_sampling_pipe{};
 	doca_flow_pipe *ingress_acl_pipe{};
+	doca_flow_pipe *ingress_packet_spray_pipe{};
 
 	// host-to-net pipes
+	doca_flow_pipe *egress_packet_spray_pipe{};
 	doca_flow_pipe *egress_acl_pipe{};
 	doca_flow_pipe *egress_sampling_pipe{};
 	doca_flow_pipe *egress_encrypt_pipe{};
@@ -363,12 +381,14 @@ private:
 	doca_flow_pipe_entry *default_decrypt_entry{};
 	doca_flow_pipe_entry *default_ingr_sampling_entry{};
 	doca_flow_pipe_entry *default_ingr_acl_entry{};
+	doca_flow_pipe_entry *default_ingr_packet_spray_entry{};
 	doca_flow_pipe_entry *default_egr_sampling_entry{};
 	doca_flow_pipe_entry *root_jump_to_ingress_entry{};
 	doca_flow_pipe_entry *root_jump_to_egress_entry{};
 	doca_flow_pipe_entry *vf_arp_to_rss{};
 	doca_flow_pipe_entry *syndrome_stats_entries[NUM_OF_PSP_SYNDROMES]{};
 	doca_flow_pipe_entry *empty_pipe_entry{};
+	std::vector<doca_flow_pipe_entry *> egr_packet_spray_entries{};
 
 	// commonly used setting to enable per-entry counters
 	struct doca_flow_monitor monitor_count {};
