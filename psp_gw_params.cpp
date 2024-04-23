@@ -20,6 +20,7 @@
 
 #include <psp_gw_config.h>
 #include <psp_gw_params.h>
+#include <psp_gw_utils.h>
 
 DOCA_LOG_REGISTER(PSP_Gateway_Params);
 
@@ -128,59 +129,24 @@ static doca_error_t handle_nexthop_dmac_param(void *param, void *config)
 	return DOCA_SUCCESS;
 }
 
-/**
- * @brief Parses a tunnel specifier for a remote host
- *
- * @fields [in]: A comma-separated string containing the following:
- * - rpc_ipv4_addr
- * - virt_ipv4_addr
- * @host [out]: The host data structure to populate
- * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
- */
-static bool parse_host_param(char *fields, struct psp_gw_host *host)
+static doca_error_t parse_subnet_mask(std::string &ip, uint32_t &mask_len)
 {
-	char *svcaddr = strtok_r(fields, ",", &fields);
-	char *virt_ip = strtok_r(fields, ",", &fields);
-	char *extra_field_check = strtok_r(fields, ",", &fields); // expect null
-
-	if (!svcaddr || !virt_ip || extra_field_check) {
-		DOCA_LOG_ERR("Tunnel host requires 2 args: svc_ip,vip");
-		return false;
-	}
-	if (inet_pton(AF_INET, svcaddr, &host->svc_ip) != 1) {
-		DOCA_LOG_ERR("Invalid svc IPv4 addr: %s", svcaddr);
-		return false;
-	}
-	if (inet_pton(AF_INET, virt_ip, &host->vip) != 1) {
-		DOCA_LOG_ERR("Invalid virtual IPv4 addr: %s", virt_ip);
-		return false;
-	}
-	return true;
-}
-
-/**
- * @brief Adds a tunnel specifier for a given remote host
- *
- * @param [in]: A string of the form described in parse_host_param()
- * @config [in/out]: A void pointer to the application config struct
- * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
- */
-static doca_error_t handle_host_param(void *param, void *config)
-{
-	auto *app_config = (struct psp_gw_app_config *)config;
-	char *host_params = (char *)param;
-	struct psp_gw_host host = {};
-
-	// note commas in host_params are replaced by null character
-	if (!parse_host_param(host_params, &host)) {
-		return DOCA_ERROR_INVALID_VALUE; // details already logged
+	mask_len = 32;
+	size_t slash = ip.find('/');
+	if (slash == std::string::npos) {
+		return DOCA_SUCCESS;
 	}
 
-	app_config->net_config.hosts.push_back(host);
+	std::string mask_len_str = ip.substr(slash + 1);
+	mask_len = std::atoi(mask_len_str.c_str());
 
-	DOCA_LOG_INFO("Added Host %d: %s",
-		      (int)app_config->net_config.hosts.size(),
-		      host_params); // just the svc addr, due to strtok
+	if (mask_len < 0 || mask_len > 32) {
+		DOCA_LOG_ERR("Invalid IP addr mask string found: %s", ip.c_str());
+		return DOCA_ERROR_INVALID_VALUE;
+	}
+
+	ip = ip.substr(0, slash);
+
 	return DOCA_SUCCESS;
 }
 
@@ -215,17 +181,37 @@ static doca_error_t handle_tunnels_file_line(const std::string &line, psp_gw_app
 	std::istringstream hosts;
 	hosts.str(line.substr(sep + 1));
 	for (std::string virt_ip; std::getline(hosts, virt_ip, ',');) {
+		uint32_t mask_len = 0;
+		doca_error_t result = parse_subnet_mask(virt_ip, mask_len);
+		if (result != DOCA_SUCCESS) {
+			return DOCA_ERROR_INVALID_VALUE;
+		}
+		if (mask_len < 16) {
+			DOCA_LOG_ERR("Tunnels file: subnet mask length < 16 not supported; found %d", mask_len);
+			return DOCA_ERROR_INVALID_VALUE;
+		}
+
 		if (inet_pton(AF_INET, virt_ip.c_str(), &host.vip) != 1) {
 			DOCA_LOG_ERR("Invalid virtual IPv4 addr: %s", virt_ip.c_str());
 			return DOCA_ERROR_INVALID_VALUE;
 		}
 
-		app_config->net_config.hosts.push_back(host);
+		uint32_t n_hosts = 1 << (32 - mask_len); // note mask_len is between 16 and 32
+		for (uint32_t i = 0; i < n_hosts; i++) {
+			app_config->net_config.hosts.push_back(host);
 
-		DOCA_LOG_INFO("Added Host %d: %s at %s",
-			      (int)app_config->net_config.hosts.size(),
-			      virt_ip.c_str(),
-			      svcaddr.c_str());
+			if (i < 16) {
+				std::string host_virt_ip = ipv4_to_string(host.vip);
+				DOCA_LOG_INFO("Added Host %d: %s at %s",
+					      (int)app_config->net_config.hosts.size(),
+					      host_virt_ip.c_str(),
+					      svcaddr.c_str());
+			} else if (i == 16) {
+				DOCA_LOG_INFO("And more Hosts... (%d)", n_hosts);
+			} // else, silent
+
+			host.vip = RTE_BE32(RTE_BE32(host.vip) + 1);
+		}
 	}
 
 	return DOCA_SUCCESS;
@@ -259,6 +245,21 @@ static doca_error_t handle_tunnels_file_param(void *param, void *config)
 
 	return DOCA_SUCCESS;
 }
+
+/**
+ * @brief Adds a tunnel specifier for a given remote host
+ *
+ * @param [in]: A string of the form described in parse_host_param()
+ * @config [in/out]: A void pointer to the application config struct
+ * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
+ */
+static doca_error_t handle_host_param(void *param, void *config)
+{
+	auto *app_config = (struct psp_gw_app_config *)config;
+	char *host_params = (char *)param;
+	return handle_tunnels_file_line(host_params, app_config);
+}
+
 
 /**
  * @brief Indicates the preferred socket address of the gRPC server
@@ -590,7 +591,7 @@ static doca_error_t psp_gw_register_params(void)
 
 	result = psp_gw_register_single_param("t",
 					      "tunnel",
-					      "Remote host tunnel(s), formatted 'mac-addr,phys-ip,virt-ip'",
+					      "Remote host tunnel(s), formatted 'svc-ip:virt-ip'",
 					      handle_host_param,
 					      DOCA_ARGP_TYPE_STRING,
 					      false,
