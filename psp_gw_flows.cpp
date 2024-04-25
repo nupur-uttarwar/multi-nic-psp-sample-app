@@ -55,7 +55,7 @@ struct entries_status {
  */
 struct eth_ipv6_psp_tunnel_hdr {
 	// encapped Ethernet header contents.
-	doca_flow_header_eth eth;
+	rte_ether_hdr eth;
 
 	// encapped IP header contents (extension header not supported)
 	rte_ipv6_hdr ip;
@@ -819,7 +819,7 @@ void PSP_GatewayFlows::format_encap_data(const psp_session_t *session, uint8_t *
 	static const doca_be32_t DEFAULT_VTC_FLOW = 0x6 << 28;
 
 	auto *encap_hdr = (eth_ipv6_psp_tunnel_hdr *)encap_data;
-	encap_hdr->eth.type = RTE_BE16(DOCA_FLOW_ETHER_TYPE_IPV6);
+	encap_hdr->eth.ether_type = RTE_BE16(DOCA_FLOW_ETHER_TYPE_IPV6);
 	encap_hdr->ip.vtc_flow = RTE_BE32(DEFAULT_VTC_FLOW);
 	encap_hdr->ip.proto = IPPROTO_UDP;
 	encap_hdr->ip.hop_limits = 50;
@@ -832,8 +832,8 @@ void PSP_GatewayFlows::format_encap_data(const psp_session_t *session, uint8_t *
 	encap_hdr->psp_virt_cookie = RTE_BE64(session->vc);
 
 	const auto &dmac = app_config->nexthop_enable ? app_config->nexthop_dmac : session->dst_mac;
-	memcpy(encap_hdr->eth.src_mac, pf_dev->src_mac.addr_bytes, DOCA_FLOW_ETHER_ADDR_LEN);
-	memcpy(encap_hdr->eth.dst_mac, dmac.addr_bytes, DOCA_FLOW_ETHER_ADDR_LEN);
+	memcpy(encap_hdr->eth.src_addr.addr_bytes, pf_dev->src_mac.addr_bytes, DOCA_FLOW_ETHER_ADDR_LEN);
+	memcpy(encap_hdr->eth.dst_addr.addr_bytes, dmac.addr_bytes, DOCA_FLOW_ETHER_ADDR_LEN);
 	memcpy(encap_hdr->ip.src_addr, pf_dev->src_pip, IPV6_ADDR_LEN);
 	memcpy(encap_hdr->ip.dst_addr, session->dst_pip, IPV6_ADDR_LEN);
 	encap_hdr->psp.rsrv1 = 1; // always 1
