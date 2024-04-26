@@ -12,11 +12,14 @@
  */
 
 #include <ctype.h>
+#include <net/if.h>
+#include <sys/ioctl.h>
+#include <fstream>
+#include <sstream>
+
 #include <doca_argp.h>
 #include <doca_dev.h>
 #include <doca_log.h>
-#include <fstream>
-#include <sstream>
 
 #include <psp_gw_config.h>
 #include <psp_gw_params.h>
@@ -82,27 +85,6 @@ static doca_error_t handle_core_mask_param(void *param, void *config)
 	app_config->core_mask = (char *)param;
 
 	DOCA_LOG_INFO("RTE EAL core-mask: %s", app_config->core_mask.c_str());
-	return DOCA_SUCCESS;
-}
-
-/**
- * @brief Configures the dst-mac to apply on decap
- *
- * @param [in]: the dst mac addr
- * @config [in/out]: A void pointer to the application config struct
- * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
- */
-static doca_error_t handle_decap_dmac_param(void *param, void *config)
-{
-	auto *app_config = (struct psp_gw_app_config *)config;
-	char *mac_addr = (char *)param;
-
-	if (rte_ether_unformat_addr(mac_addr, &app_config->dcap_dmac) != 0) {
-		DOCA_LOG_ERR("Malformed mac addr: %s", mac_addr);
-		return DOCA_ERROR_INVALID_VALUE;
-	}
-
-	DOCA_LOG_INFO("Decap dmac: %s", mac_addr);
 	return DOCA_SUCCESS;
 }
 
@@ -368,18 +350,10 @@ static doca_error_t handle_sample_param(void *param, void *config)
 static doca_error_t handle_static_tunnels_param(void *param, void *config)
 {
 	auto *app_config = (struct psp_gw_app_config *)config;
-	app_config->local_vf_addr = (char *)param;
+	app_config->create_tunnels_at_startup = (bool *)param;
 
-	rte_be32_t test_local_vf_addr = 0;
-	if (inet_pton(AF_INET, app_config->local_vf_addr.c_str(), &test_local_vf_addr) != 1) {
-		DOCA_LOG_ERR("Malformed local VF IP addr param: %s", app_config->local_vf_addr.c_str());
-		return DOCA_ERROR_INVALID_VALUE;
-	}
-
-	app_config->create_tunnels_at_startup = true;
 	DOCA_LOG_INFO("Create PSP tunnels at startup: %s",
 		      app_config->create_tunnels_at_startup ? "Enabled" : "Disabled");
-	DOCA_LOG_INFO("Create PSP tunnels using VF IP addr: %s", app_config->local_vf_addr.c_str());
 
 	return DOCA_SUCCESS;
 }
@@ -466,6 +440,47 @@ static doca_error_t handle_debug_keys_param(void *param, void *config)
 	if (*bool_param) {
 		DOCA_LOG_INFO("NOTE: debug_keys is enabled; crypto keys will be written to logs.");
 	}
+	return DOCA_SUCCESS;
+}
+
+static doca_error_t handle_vf_name_param(void *param, void *config)
+{
+	auto *app_config = (struct psp_gw_app_config *)config;
+	std::string vf_iface_name = (const char *)param;
+	int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (sockfd < 0) {
+		DOCA_LOG_ERR("Failed to open socket");
+		return DOCA_ERROR_IO_FAILED;
+	}
+
+	struct ifreq ifr = {};
+	strncpy(ifr.ifr_name, vf_iface_name.c_str(), IFNAMSIZ - 1);
+
+	if (ioctl(sockfd, SIOCGIFADDR, &ifr) < 0) {
+		DOCA_LOG_ERR("Failed ioctl(sockfd, SIOCGIFADDR, &ifr)");
+		;
+		close(sockfd);
+		return DOCA_ERROR_IO_FAILED;
+	}
+
+	rte_be32_t vf_ip_addr = ((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr.s_addr;
+	app_config->local_vf_addr = ipv4_to_string(vf_ip_addr);
+
+	if (ioctl(sockfd, SIOCGIFHWADDR, &ifr) < 0) {
+		DOCA_LOG_ERR("Failed ioctl(sockfd, SIOCGIFHWADDR, &ifr)");
+		;
+		close(sockfd);
+		return DOCA_ERROR_IO_FAILED;
+	}
+
+	app_config->dcap_dmac = *(rte_ether_addr *)ifr.ifr_hwaddr.sa_data;
+	close(sockfd);
+
+	DOCA_LOG_INFO("For VF device %s, detected IP addr %s, mac addr %s",
+		      vf_iface_name.c_str(),
+		      app_config->local_vf_addr.c_str(),
+		      mac_to_string(app_config->dcap_dmac).c_str());
+
 	return DOCA_SUCCESS;
 }
 
@@ -560,14 +575,15 @@ static doca_error_t psp_gw_register_params(void)
 		return result;
 
 	result = psp_gw_register_single_param("d",
-					      "decap-dmac",
-					      "mac_dst addr of the decapped packets",
-					      handle_decap_dmac_param,
+					      "vf-name",
+					      "Name of the virtual function device / unsecured port",
+					      handle_vf_name_param,
 					      DOCA_ARGP_TYPE_STRING,
 					      true,
 					      false);
 	if (result != DOCA_SUCCESS)
 		return result;
+
 
 	result = psp_gw_register_single_param("n",
 					      "nexthop-dmac",
@@ -672,9 +688,9 @@ static doca_error_t psp_gw_register_params(void)
 
 	result = psp_gw_register_single_param("z",
 					      "static-tunnels",
-					      "Create tunnels at startup using the given local IP addr",
+					      "Create tunnels at startup",
 					      handle_static_tunnels_param,
-					      DOCA_ARGP_TYPE_STRING,
+					      DOCA_ARGP_TYPE_BOOLEAN,
 					      false,
 					      false);
 	if (result != DOCA_SUCCESS)
