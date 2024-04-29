@@ -338,7 +338,7 @@ static doca_error_t handle_ingress_acl_param(void *param, void *config)
 	auto *app_config = (struct psp_gw_app_config *)config;
 	bool *bool_param = (bool *)param;
 	app_config->disable_ingress_acl = *bool_param;
-	DOCA_LOG_INFO("Ingress ACLs %s", *bool_param ? "Enabled" : "Disabled");
+	DOCA_LOG_INFO("Ingress ACLs %s", *bool_param ? "Disabled" : "Enabled");
 	return DOCA_SUCCESS;
 }
 
