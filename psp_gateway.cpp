@@ -179,6 +179,25 @@ int main(int argc, char **argv)
 
 	vf_port_id = pf_dev.port_id + 1;
 
+	if (app_config.nexthop_enable && !app_config.nexthop_dmac_lookup.empty()) {
+		bool my_pf_found = false;
+		for (const auto &pf_nh_pair : app_config.nexthop_dmac_lookup) {
+			rte_ether_addr pf_mac;
+			(void)rte_ether_unformat_addr(pf_nh_pair.first.c_str(), &pf_mac);
+			if (rte_is_same_ether_addr(&pf_mac, &pf_dev.src_mac)) {
+				(void)rte_ether_unformat_addr(pf_nh_pair.second.c_str(), &app_config.nexthop_dmac);
+				my_pf_found = true;
+				DOCA_LOG_INFO("Selected next-hop %s", pf_nh_pair.second.c_str());
+				break;
+			}
+		}
+		if (!my_pf_found) {
+			DOCA_LOG_ERR("A next-hop file was specified, but my PF MAC (%s) was not found",
+				     pf_dev.src_mac_str.c_str());
+			return result;
+		}
+	}
+
 	// Update queues and ports
 	result = dpdk_queues_and_ports_init(&app_config.dpdk_config);
 	if (result != DOCA_SUCCESS) {

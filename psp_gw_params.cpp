@@ -95,14 +95,68 @@ static doca_error_t handle_core_mask_param(void *param, void *config)
  * @config [in/out]: A void pointer to the application config struct
  * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
  */
+static doca_error_t handle_nexthop_dmac_file_param(void *param, void *config)
+{
+	auto *app_config = (struct psp_gw_app_config *)config;
+	char *filename = (char *)param;
+
+	std::ifstream in{filename};
+	if (!in.good()) {
+		DOCA_LOG_ERR("Failed to open nexthop file");
+		return DOCA_ERROR_NOT_FOUND;
+	}
+
+	for (std::string line; std::getline(in, line);) {
+		DOCA_LOG_DBG("%s", line.c_str());
+		if (line.length() == 0 || line[0] == '#') {
+			continue;
+		}
+
+		size_t sep = line.find(',');
+		if (sep == 0 || sep == std::string::npos) {
+			DOCA_LOG_ERR("Incorrect file format; expected pf-mac,nexthop-mac");
+			return DOCA_ERROR_INVALID_VALUE;
+		}
+
+		std::string pf_mac_str = line.substr(0, sep);
+		std::string nh_mac_str = line.substr(sep + 1);
+
+		rte_ether_addr pf_mac;
+		rte_ether_addr nh_mac;
+		if (rte_ether_unformat_addr(pf_mac_str.c_str(), &pf_mac) ||
+		    rte_ether_unformat_addr(nh_mac_str.c_str(), &nh_mac)) {
+			DOCA_LOG_ERR("Incorrect file format; expected pf-mac,nexthop-mac");
+			return DOCA_ERROR_INVALID_VALUE;
+		}
+
+		app_config->nexthop_dmac_lookup[pf_mac_str] = nh_mac_str;
+	}
+
+	app_config->nexthop_enable = true;
+
+	DOCA_LOG_INFO("Processed nexthop file %s", filename);
+
+	return DOCA_SUCCESS;
+}
+
+/**
+ * @brief Configures the next-hop dst-mac to apply on encap
+ *
+ * @param [in]: the dst mac addr
+ * @config [in/out]: A void pointer to the application config struct
+ * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
+ */
 static doca_error_t handle_nexthop_dmac_param(void *param, void *config)
 {
 	auto *app_config = (struct psp_gw_app_config *)config;
 	char *mac_addr = (char *)param;
 
 	if (rte_ether_unformat_addr(mac_addr, &app_config->nexthop_dmac) != 0) {
-		DOCA_LOG_ERR("Malformed mac addr: %s", mac_addr);
-		return DOCA_ERROR_INVALID_VALUE;
+		doca_error_t result = handle_nexthop_dmac_file_param(param, config);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Next-hop: not a valid mac address and not a valid lookup file: %s", mac_addr);
+		}
+		return result;
 	}
 
 	app_config->nexthop_enable = true;
@@ -241,7 +295,6 @@ static doca_error_t handle_host_param(void *param, void *config)
 	char *host_params = (char *)param;
 	return handle_tunnels_file_line(host_params, app_config);
 }
-
 
 /**
  * @brief Indicates the preferred socket address of the gRPC server
@@ -584,10 +637,9 @@ static doca_error_t psp_gw_register_params(void)
 	if (result != DOCA_SUCCESS)
 		return result;
 
-
 	result = psp_gw_register_single_param("n",
 					      "nexthop-dmac",
-					      "next-hop mac_dst addr of the encapped packets",
+					      "next-hop mac_dst addr of the encapped packets, or next-hop lookup file",
 					      handle_nexthop_dmac_param,
 					      DOCA_ARGP_TYPE_STRING,
 					      false,

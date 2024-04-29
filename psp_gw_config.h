@@ -14,6 +14,7 @@
 #ifndef _PSP_GW_FLOWS_H_
 #define _PSP_GW_FLOWS_H_
 
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -84,6 +85,7 @@ struct psp_gw_app_config {
 
 	bool nexthop_enable;	     //!< Whether to override the dmac in the tunnel request with a nexthop mac addr
 	rte_ether_addr nexthop_dmac; //!< The dst mac to apply on encap, if enabled
+	std::map<std::string, std::string> nexthop_dmac_lookup; //!< List of nexthop dmacs, per PF mac
 
 	uint32_t max_tunnels; //!< The maximum number of outgoing tunnel connections supported on this host
 
