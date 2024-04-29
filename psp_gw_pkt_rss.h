@@ -57,10 +57,14 @@ bool reinject_packet(struct rte_mbuf *packet, uint16_t port_id);
 /**
  * @brief Used by rx_burst to reply to an ARP request.
  *
- * <ARGS TODO>
+ * @mpool [in]: the mempool to allocate the response packet from
+ * @port_id [in]: the port on which to send the ARP response
+ * @queue_id [in]: the queue on which to send the ARP response
+ * @request_pkt [in]: the ARP request packet
+ * @arp_response_meta_flag [in]: the metadata flag to set on the ARP response
  * @return: 0 on success, error code on failure
  */
-static int
+int
 handle_arp(
     struct rte_mempool *mpool,
     uint16_t port_id,

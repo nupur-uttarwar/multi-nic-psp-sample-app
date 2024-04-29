@@ -69,7 +69,7 @@ static void handle_packet(struct lcore_params *params, uint16_t port_id, uint16_
 			handle_arp(
 				params->config->dpdk_config.mbuf_pool,
 				port_id,
-				rte_lcore_id() - 1,
+				queue_id,
 				packet,
 				0);
 		} else {
@@ -144,7 +144,7 @@ bool reinject_packet(struct rte_mbuf *packet, uint16_t port_id)
 	return nsent == 1;
 }
 
-static int
+int
 handle_arp(
     struct rte_mempool *mpool,
     uint16_t port_id,
@@ -191,12 +191,12 @@ handle_arp(
     response_arp_hdr->arp_data.arp_sip = request_arp_hdr->arp_data.arp_tip;
     response_arp_hdr->arp_data.arp_tip = request_arp_hdr->arp_data.arp_sip;
 
-// #if 0
+#if 0
 	DOCA_LOG_INFO("ARP Request:");
     rte_pktmbuf_dump(stdout, request_pkt, request_pkt->data_len);
     DOCA_LOG_INFO("ARP Response:");
 	rte_pktmbuf_dump(stdout, response_pkt, response_pkt->data_len);
-// #endif
+#endif
 
     uint16_t nb_tx_packets = 0;
     while (nb_tx_packets < 1) {
