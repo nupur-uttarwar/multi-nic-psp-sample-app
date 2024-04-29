@@ -940,6 +940,7 @@ doca_error_t PSP_GatewayFlows::empty_pipe_create(doca_flow_pipe *next_pipe)
 
 	doca_flow_fwd fwd = {};
 	fwd.type = DOCA_FLOW_FWD_PORT;
+	fwd.port_id = UINT16_MAX;
 
 	doca_flow_fwd fwd_miss = {};
 	fwd_miss.type = DOCA_FLOW_FWD_PIPE;
