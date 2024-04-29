@@ -387,7 +387,7 @@ private:
 	doca_flow_pipe_entry *root_jump_to_egress_entry{};
 	doca_flow_pipe_entry *vf_arp_to_rss{};
 	doca_flow_pipe_entry *syndrome_stats_entries[NUM_OF_PSP_SYNDROMES]{};
-	doca_flow_pipe_entry *empty_pipe_entry{};
+	doca_flow_pipe_entry *empty_pipe_arp_entry{};
 	std::vector<doca_flow_pipe_entry *> egr_packet_spray_entries{};
 
 	// commonly used setting to enable per-entry counters

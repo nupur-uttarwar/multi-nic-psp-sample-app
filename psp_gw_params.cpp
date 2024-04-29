@@ -373,7 +373,7 @@ static doca_error_t handle_ingress_acl_param(void *param, void *config)
 	auto *app_config = (struct psp_gw_app_config *)config;
 	bool *bool_param = (bool *)param;
 	app_config->disable_ingress_acl = *bool_param;
-	DOCA_LOG_INFO("Ingress ACLs %s", *bool_param ? "Enabled" : "Disabled");
+	DOCA_LOG_INFO("Ingress ACLs %s", *bool_param ? "Disabled" : "Enabled");
 	return DOCA_SUCCESS;
 }
 
@@ -534,6 +534,24 @@ static doca_error_t handle_vf_name_param(void *param, void *config)
 		      app_config->local_vf_addr.c_str(),
 		      mac_to_string(app_config->dcap_dmac).c_str());
 
+	return DOCA_SUCCESS;
+}
+
+/**
+ * @brief Indicates the application should log all encryption keys
+ *
+ * @param [in]: A pointer to a boolean flag
+ * @config [in/out]: A void pointer to the application config struct
+ * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
+ */
+static doca_error_t handle_show_rss_rx_packets_param(void *param, void *config)
+{
+	auto *app_config = (struct psp_gw_app_config *)config;
+	bool *bool_param = (bool *)param;
+	app_config->show_rss_rx_packets = *bool_param;
+	if (*bool_param) {
+		DOCA_LOG_INFO("NOTE: show_rss_rx_packets is enabled; rx packets received to RSS will be written to logs.");
+	}
 	return DOCA_SUCCESS;
 }
 
@@ -756,6 +774,9 @@ static doca_error_t psp_gw_register_params(void)
 					      false,
 					      false);
 
+	if (result != DOCA_SUCCESS)
+		return result;
+
 	result = psp_gw_register_single_param("b",
 					      "benchmark",
 					      "Run PSP Benchmarks and exit",
@@ -770,6 +791,16 @@ static doca_error_t psp_gw_register_params(void)
 					      "spray",
 					      "Spray packets across SPI tunnels",
 					      handle_spray_param,
+					      DOCA_ARGP_TYPE_BOOLEAN,
+					      false,
+					      false);
+	if (result != DOCA_SUCCESS)
+		return result;
+
+	result = psp_gw_register_single_param(nullptr,
+					      "show-rss-rx-packets",
+					      "Show RSS rx packets",
+					      handle_show_rss_rx_packets_param,
 					      DOCA_ARGP_TYPE_BOOLEAN,
 					      false,
 					      false);
