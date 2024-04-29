@@ -935,11 +935,15 @@ doca_error_t PSP_GatewayFlows::egress_sampling_pipe_create(void)
 doca_error_t PSP_GatewayFlows::empty_pipe_create(doca_flow_pipe *next_pipe)
 {
 	doca_error_t result = DOCA_SUCCESS;
-	doca_flow_match match = {};
+	doca_flow_match match_arp_mask = {};
+	match_arp_mask.outer.eth.type = UINT16_MAX;
 
 	doca_flow_fwd fwd = {};
-	fwd.type = DOCA_FLOW_FWD_PIPE;
-	fwd.next_pipe = next_pipe;
+	fwd.type = DOCA_FLOW_FWD_PORT;
+
+	doca_flow_fwd fwd_miss = {};
+	fwd_miss.type = DOCA_FLOW_FWD_PIPE;
+	fwd_miss.next_pipe = next_pipe;
 
 	doca_flow_pipe_cfg *pipe_cfg;
 	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev->port_obj));
@@ -947,12 +951,17 @@ doca_error_t PSP_GatewayFlows::empty_pipe_create(doca_flow_pipe *next_pipe)
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_domain(pipe_cfg, DOCA_FLOW_PIPE_DOMAIN_EGRESS));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_is_root(pipe_cfg, true));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, 1));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &match, nullptr));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &match_arp_mask, nullptr));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_monitor(pipe_cfg, &monitor_count));
-	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd, nullptr, &empty_pipe));
+	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd, &fwd_miss, &empty_pipe));
+
+	// ARP should be forwarded directly to the VF.
+	doca_flow_match match_arp = {};
+	match_arp.outer.eth.type = RTE_BE16(RTE_ETHER_TYPE_ARP);
+	fwd.port_id = vf_port_id;
 	IF_SUCCESS(
 		result,
-		add_single_entry(0, empty_pipe, pf_dev->port_obj, nullptr, nullptr, nullptr, nullptr, &empty_pipe_entry));
+		add_single_entry(0, empty_pipe, pf_dev->port_obj, &match_arp, nullptr, nullptr, &fwd, &empty_pipe_arp_entry));
 
 	if (pipe_cfg) {
 		doca_flow_pipe_cfg_destroy(pipe_cfg);
@@ -987,7 +996,7 @@ doca_error_t PSP_GatewayFlows::empty_pipe_create_not_sampled(void)
 				    nullptr,
 				    nullptr,
 				    nullptr,
-				    &empty_pipe_entry));
+				    &empty_pipe_arp_entry));
 
 	if (pipe_cfg) {
 		doca_flow_pipe_cfg_destroy(pipe_cfg);
@@ -1236,9 +1245,10 @@ void PSP_GatewayFlows::show_static_flow_counts(void)
 							"egr_spray[" + std::to_string(i) + "]"});
 		}
 	}
-	queries.emplace_back(pipe_query{nullptr, empty_pipe_entry, "egress_root"});
+	queries.emplace_back(pipe_query{nullptr, empty_pipe_arp_entry, "egress_root"});
 	queries.emplace_back(pipe_query{egress_acl_pipe, nullptr, "egress_acl_pipe"});
 	queries.emplace_back(pipe_query{egress_sampling_pipe, default_egr_sampling_entry, "egress_sampling_pipe"});
+	queries.emplace_back(pipe_query{nullptr, empty_pipe_arp_entry, "empty_pipe_arp_entry"});
 
 	uint64_t total_pkts = 0;
 	for (auto &query : queries) {

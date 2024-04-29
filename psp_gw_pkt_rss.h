@@ -53,4 +53,19 @@ int lcore_pkt_proc_func(void *lcore_args);
  */
 bool reinject_packet(struct rte_mbuf *packet, uint16_t port_id);
 
+
+/**
+ * @brief Used by rx_burst to reply to an ARP request.
+ *
+ * <ARGS TODO>
+ * @return: 0 on success, error code on failure
+ */
+static int
+handle_arp(
+    struct rte_mempool *mpool,
+    uint16_t port_id,
+    uint16_t queue_id,
+    const struct rte_mbuf *request_pkt,
+    uint32_t arp_response_meta_flag);
+
 #endif // _PSP_GW_PKT_RSS_H
