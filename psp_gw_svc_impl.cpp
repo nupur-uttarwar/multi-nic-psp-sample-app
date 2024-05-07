@@ -364,13 +364,29 @@ doca_error_t PSP_GatewayImpl::generate_tunnel_params(int psp_ver, psp_gateway::T
 
 	response->set_request_id(request->request_id());
 
-	if (request->issue_new_keys()) {
-		return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "Re-key not implemented");
-	}
-
 	doca_error_t result = doca_flow_crypto_psp_master_key_rotate(pf->port_obj);
 	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_WARN("Key Rotation Failed: %s", doca_error_get_descr(result));
 		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Key Rotation Failed");
+	}
+
+	// TODO move this out
+	if (request->issue_new_keys()) {
+		for (auto &session : sessions) {
+			psp_session_t *psp_session = &session.second;
+			psp_gw_host *remote_host = lookup_remote_host(psp_session->dst_vip);
+			DOCA_LOG_INFO("dest vip: %s", ipv4_to_string(psp_session->dst_vip).c_str());
+			if (remote_host == NULL) {
+				DOCA_LOG_ERR("Failed to find remote host for session %s", ipv4_to_string(psp_session->dst_vip).c_str());
+				return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "Remote host not found");
+			}
+			else {
+				result = request_tunnel_to_host(remote_host, psp_session->src_vip, true, true);
+				if (result != DOCA_SUCCESS) {
+					return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "tunnel request failed");
+				}
+			}
+		}
 	}
 
 	return ::grpc::Status::OK;

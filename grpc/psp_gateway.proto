@@ -53,7 +53,7 @@ message NewTunnelResponse
 message KeyRotationRequest
 {
     uint64 request_id = 1; // unique per host
-    bool issue_new_keys = 2;
+    bool issue_new_keys = 2; // broadcast keys after rotating
 }
 
 message KeyRotationResponse
