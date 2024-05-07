@@ -32,6 +32,9 @@ PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, PSP_GatewayFlows *ps
 	  pf(psp_flows->pf()),
 	  DEBUG_KEYS(config->debug_keys)
 {
+	for (uint32_t i = 1; i <= (config->max_tunnels + 1); ++i) {
+		available_crypto_ids.insert(i);
+	}
 }
 
 doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
@@ -166,10 +169,18 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 		return DOCA_ERROR_IO_FAILED;
 	}
 
-	uint32_t crypto_id = next_crypto_id();
+	uint32_t crypto_id = allocate_crypto_id();
 	if (crypto_id == UINT32_MAX) {
 		DOCA_LOG_ERR("Exhausted available crypto_ids; cannot complete new tunnel");
 		return DOCA_ERROR_NO_MEMORY;
+	}
+
+	// If there is an existing session, remove it
+	if (sessions.find(remote_host_vip) != sessions.end()) {
+		DOCA_LOG_WARN("Session already exists for remote host %s. Removing it and creating a new one.", remote_host_vip.c_str());
+		release_crypto_id(sessions[remote_host_vip].crypto_id);
+		psp_flows->remove_encrypt_entry(&sessions[remote_host_vip]);
+		sessions.erase(remote_host_vip);
 	}
 
 	const void *encrypt_key = params.encryption_key().c_str();
@@ -192,6 +203,8 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 		sessions.erase(remote_host_vip);
 		return DOCA_ERROR_INVALID_VALUE;
 	}
+
+	// TODO: If there is already a session with the same remote_host->vip, we need to clean it up before creating a new session
 
 	DOCA_LOG_INFO("Received tunnel params from %s, SPI %d", remote_host_svc_ip.c_str(), session.spi_egress);
 	debug_key("Received", encrypt_key, params.encryption_key().size());
@@ -275,8 +288,11 @@ int PSP_GatewayImpl::select_psp_version(const ::psp_gateway::NewTunnelRequest *r
 		DOCA_LOG_INFO("Opened ACL from host %s on SPI %d", request->virt_src_ip().c_str(), session.spi_ingress);
 	}
 
+	DOCA_LOG_INFO("Request has reverse params: %d", request->has_reverse_params());
 	if (request->has_reverse_params()) {
 		struct psp_gw_host remote_host = {};
+
+		DOCA_LOG_INFO("Creating return flow for request %ld", request->request_id());
 
 		if (inet_pton(AF_INET, request->virt_src_ip().c_str(), &remote_host.vip) != 1) {
 			return ::grpc::Status(grpc::INVALID_ARGUMENT,
@@ -393,12 +409,27 @@ doca_error_t PSP_GatewayImpl::show_flow_counts(void)
 	return DOCA_SUCCESS;
 }
 
-uint32_t PSP_GatewayImpl::next_crypto_id(void)
+uint32_t PSP_GatewayImpl::allocate_crypto_id(void)
 {
-	if (next_crypto_id_ > config->max_tunnels) {
+	if (available_crypto_ids.empty()) {
+		DOCA_LOG_WARN("Exhausted available crypto_ids");
 		return UINT32_MAX;
 	}
-	return next_crypto_id_++;
+
+	auto crypto_id_it = available_crypto_ids.begin();
+	uint32_t crypto_id = *crypto_id_it;
+	available_crypto_ids.erase(crypto_id);
+	DOCA_LOG_INFO("Picked crypto_id %d", crypto_id);
+	return crypto_id;
+}
+
+
+void PSP_GatewayImpl::release_crypto_id(uint32_t crypto_id)
+{
+	if (available_crypto_ids.find(crypto_id) != available_crypto_ids.end()) {
+		DOCA_LOG_WARN("Crypto ID %d already released", crypto_id);
+	}
+	available_crypto_ids.insert(crypto_id);
 }
 
 ::psp_gateway::PSP_Gateway::Stub *PSP_GatewayImpl::get_stub(const std::string &remote_host_ip)

@@ -221,7 +221,14 @@ private:
 	 *
 	 * @return: The crypto_id to use for the PSP shared resource
 	 */
-	uint32_t next_crypto_id(void);
+	uint32_t allocate_crypto_id(void);
+
+	/**
+	 * @brief Releases the given crypto_id so that it can be reused
+	 *
+	 * @crypto_id [in]: The crypto_id to release
+	 */
+	void release_crypto_id(uint32_t crypto_id);
 
 	// Application state data:
 
@@ -247,7 +254,8 @@ private:
 	std::map<std::string, psp_session_t> sessions;
 
 	// Used to assign a unique shared-resource ID to each encryption flow.
-	uint32_t next_crypto_id_ = 1;
+	std::set<uint32_t> available_crypto_ids;
+
 };
 
 #endif // _PSP_GW_SVC_H
