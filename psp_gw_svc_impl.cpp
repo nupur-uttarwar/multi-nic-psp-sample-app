@@ -286,11 +286,8 @@ int PSP_GatewayImpl::select_psp_version(const ::psp_gateway::NewTunnelRequest *r
 		DOCA_LOG_INFO("Opened ACL from host %s on SPI %d", request->virt_src_ip().c_str(), session.spi_ingress);
 	}
 
-	DOCA_LOG_INFO("Request has reverse params: %d", request->has_reverse_params());
 	if (request->has_reverse_params()) {
 		struct psp_gw_host remote_host = {};
-
-		DOCA_LOG_INFO("Creating return flow for request %ld", request->request_id());
 
 		if (inet_pton(AF_INET, request->virt_src_ip().c_str(), &remote_host.vip) != 1) {
 			return ::grpc::Status(grpc::INVALID_ARGUMENT,
@@ -368,12 +365,11 @@ doca_error_t PSP_GatewayImpl::generate_tunnel_params(int psp_ver, psp_gateway::T
 		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Key Rotation Failed");
 	}
 
-	// TODO move this out
+	// TODO move this to a separate function
 	if (request->issue_new_keys()) {
 		for (auto &session : sessions) {
 			psp_session_t *psp_session = &session.second;
 			psp_gw_host *remote_host = lookup_remote_host(psp_session->dst_vip);
-			DOCA_LOG_INFO("dest vip: %s", ipv4_to_string(psp_session->dst_vip).c_str());
 			if (remote_host == NULL) {
 				DOCA_LOG_ERR("Failed to find remote host for session %s", ipv4_to_string(psp_session->dst_vip).c_str());
 				return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "Remote host not found");
