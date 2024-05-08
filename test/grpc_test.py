@@ -32,6 +32,8 @@ class TestGRPC(unittest.TestCase):
         cmd = "lsof -Pan -i tcp -i udp | grep LISTEN | grep $(ps aux | grep -m1 doca_psp_gateway | awk '{ print $2 }') | awk '{ print $9 }'"
         addr = subprocess.check_output(cmd, shell=True).decode('utf-8').strip()
         cls.grpc_addr, cls.grpc_port = addr.split(':')
+        if cls.grpc_addr == '*':
+            cls.grpc_addr = 'localhost'
 
         print(f"Using gRPC target: {cls.grpc_addr}:{cls.grpc_port}.")
 

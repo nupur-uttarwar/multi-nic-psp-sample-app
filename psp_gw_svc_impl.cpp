@@ -139,14 +139,14 @@ doca_error_t PSP_GatewayImpl::request_tunnel_to_host(struct psp_gw_host *remote_
 
 			result = psp_flows->add_ingress_acl_entry(&session);
 			if (result != DOCA_SUCCESS) {
-				DOCA_LOG_ERR("Failed to open ACL from %s on SPI %d: %s",
+				DOCA_LOG_ERR("Failed to open ACL from %s on SPI 0x%x: %s",
 					     remote_host_vip.c_str(),
 					     session.spi_ingress,
 					     doca_error_get_descr(result));
 				return result;
 			}
 
-			DOCA_LOG_INFO("Opened ACL from host %s on SPI %d",
+			DOCA_LOG_INFO("Opened ACL from host %s on SPI 0x%x",
 				      remote_host_vip.c_str(),
 				      session.spi_ingress);
 		}
@@ -197,11 +197,12 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 	}
 
 	const void *encrypt_key = params.encryption_key().c_str();
-	DOCA_LOG_INFO("Received tunnel params from %s, SPI %d", remote_host_svc_ip.c_str(), params.spi());
+	DOCA_LOG_INFO("Received tunnel params from %s, SPI 0x%x", remote_host_svc_ip.c_str(), params.spi());
 	debug_key("Received", encrypt_key, params.encryption_key().size());
 
 	// If there is an existing session, we should update it instead of making a new one
-	if (sessions.find(remote_host_vip) != sessions.end()) {
+	if (sessions.find(remote_host_vip) != sessions.end() &&
+			sessions[remote_host_vip].encap_encrypt_entry) {
 		DOCA_LOG_WARN("Session already exists for remote host %s. Updating it.", remote_host_vip.c_str());
 		psp_session_t *old_session_details = &sessions[remote_host_vip];
 		psp_session_t new_session = *old_session_details;
@@ -294,7 +295,7 @@ int PSP_GatewayImpl::select_psp_version(const ::psp_gateway::NewTunnelRequest *r
 		return ::grpc::Status(::grpc::RESOURCE_EXHAUSTED, "Failed to generate SPI/Key");
 	}
 
-	DOCA_LOG_INFO("SPI %d generated for addr %s on peer %s",
+	DOCA_LOG_INFO("SPI 0x%x generated for addr %s on peer %s",
 		      response->params().spi(),
 		      request->virt_src_ip().c_str(),
 		      peer.c_str());
@@ -310,14 +311,14 @@ int PSP_GatewayImpl::select_psp_version(const ::psp_gateway::NewTunnelRequest *r
 
 		result = psp_flows->add_ingress_acl_entry(&session);
 		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to open ACL from %s on SPI %d: %s",
+			DOCA_LOG_ERR("Failed to open ACL from %s on SPI 0x%x: %s",
 				     request->virt_src_ip().c_str(),
 				     session.spi_ingress,
 				     doca_error_get_descr(result));
 			return ::grpc::Status(grpc::INTERNAL, "Failed to create ingress ACL session flow");
 		}
 
-		DOCA_LOG_INFO("Opened ACL from host %s on SPI %d", request->virt_src_ip().c_str(), session.spi_ingress);
+		DOCA_LOG_INFO("Opened ACL from host %s on SPI 0x%x", request->virt_src_ip().c_str(), session.spi_ingress);
 	}
 
 	if (request->has_reverse_params()) {
@@ -335,7 +336,7 @@ int PSP_GatewayImpl::select_psp_version(const ::psp_gateway::NewTunnelRequest *r
 					      "Failed to create the return flow for request " +
 						      std::to_string(request->request_id()));
 		}
-		DOCA_LOG_INFO("Created return flow on SPI %d to peer %s",
+		DOCA_LOG_INFO("Created return flow on SPI 0x%x to peer %s",
 			      request->reverse_params().spi(),
 			      peer.c_str());
 	}
