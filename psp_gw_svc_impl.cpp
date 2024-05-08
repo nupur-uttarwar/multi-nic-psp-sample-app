@@ -201,10 +201,10 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 	debug_key("Received", encrypt_key, params.encryption_key().size());
 
 	// If there is an existing session, we should update it instead of making a new one
-	if (sessions.find(remote_host_vip) != sessions.end() &&
-			sessions[remote_host_vip].encap_encrypt_entry) {
+	auto existing_session = sessions.find(remote_host_vip);
+	if (existing_session != sessions.end() && existing_session->second.encap_encrypt_entry) {
 		DOCA_LOG_WARN("Session already exists for remote host %s. Updating it.", remote_host_vip.c_str());
-		psp_session_t *old_session_details = &sessions[remote_host_vip];
+		psp_session_t *old_session_details = &existing_session->second;
 		psp_session_t new_session = *old_session_details;
 		new_session.crypto_id = crypto_id;
 		new_session.spi_egress = params.spi();
@@ -215,9 +215,8 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 			return result;
 		}
 
-		release_crypto_id(sessions[remote_host_vip].crypto_id);
-		sessions.erase(remote_host_vip);
-		sessions[remote_host_vip] = new_session;
+		release_crypto_id(existing_session->second.crypto_id);
+		existing_session->second = new_session;
 		return DOCA_SUCCESS;
 	}
 
