@@ -904,15 +904,6 @@ doca_error_t PSP_GatewayFlows::update_encrypt_entry(psp_session_t *session, cons
 	encap_actions.crypto.resource_type = DOCA_FLOW_CRYPTO_RESOURCE_PSP;
 	encap_actions.crypto.crypto_id = session->crypto_id;
 
-	// DOCA_EXPERIMENTAL
-	// doca_error_t doca_flow_pipe_update_entry(uint16_t pipe_queue,
-	// 				 struct doca_flow_pipe *pipe,
-	// 				 const struct doca_flow_actions *actions,
-	// 				 const struct doca_flow_monitor *monitor,
-	// 				 const struct doca_flow_fwd *fwd,
-	// 				 const enum doca_flow_flags_type flags,
-	// 				 struct doca_flow_pipe_entry *entry);
-
 	result = doca_flow_pipe_update_entry(
 		0, // pipe_queue
 		egress_acl_pipe,
