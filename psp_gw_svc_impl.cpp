@@ -404,7 +404,6 @@ doca_error_t PSP_GatewayImpl::generate_tunnel_params(int psp_ver, psp_gateway::T
 		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Key Rotation Failed");
 	}
 
-	// TODO move this to a separate function
 	if (request->issue_new_keys()) {
 		result = update_current_sessions();
 		if (result != DOCA_SUCCESS) {
