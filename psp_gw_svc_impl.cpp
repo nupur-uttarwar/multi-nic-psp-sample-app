@@ -90,12 +90,10 @@ doca_error_t PSP_GatewayImpl::update_current_sessions()
 			DOCA_LOG_ERR("Failed to find remote host for session %s", ipv4_to_string(psp_session->dst_vip).c_str());
 			return DOCA_ERROR_NOT_FOUND;
 		}
-		else {
-			doca_error_t result = request_tunnel_to_host(remote_host, config->local_vf_addr_raw, true, true);
-			if (result != DOCA_SUCCESS) {
-				DOCA_LOG_ERR("Failed to update session %s", ipv4_to_string(psp_session->dst_vip).c_str());
-				return result;
-			}
+		doca_error_t result = request_tunnel_to_host(remote_host, config->local_vf_addr_raw, true, true);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to update session %s", ipv4_to_string(psp_session->dst_vip).c_str());
+			return result;
 		}
 	}
 	return DOCA_SUCCESS;
@@ -199,8 +197,10 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 	}
 
 	const void *encrypt_key = params.encryption_key().c_str();
+	DOCA_LOG_INFO("Received tunnel params from %s, SPI %d", remote_host_svc_ip.c_str(), params.spi());
+	debug_key("Received", encrypt_key, params.encryption_key().size());
 
-	// If there is an existing session, we should update it
+	// If there is an existing session, we should update it instead of making a new one
 	if (sessions.find(remote_host_vip) != sessions.end()) {
 		DOCA_LOG_WARN("Session already exists for remote host %s. Updating it.", remote_host_vip.c_str());
 		psp_session_t *old_session_details = &sessions[remote_host_vip];
@@ -240,9 +240,6 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 		release_crypto_id(crypto_id);
 		return DOCA_ERROR_INVALID_VALUE;
 	}
-
-	DOCA_LOG_INFO("Received tunnel params from %s, SPI %d", remote_host_svc_ip.c_str(), session.spi_egress);
-	debug_key("Received", encrypt_key, params.encryption_key().size());
 
 	result = psp_flows->add_encrypt_entry(&session, encrypt_key);
 	if (result != DOCA_SUCCESS) {
