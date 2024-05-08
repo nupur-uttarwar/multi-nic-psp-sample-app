@@ -79,6 +79,28 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 	return DOCA_SUCCESS;
 }
 
+doca_error_t PSP_GatewayImpl::update_current_sessions()
+{
+	DOCA_LOG_DBG("Updating current sessions");
+
+	for (auto &session : sessions) {
+		psp_session_t *psp_session = &session.second;
+		psp_gw_host *remote_host = lookup_remote_host(psp_session->dst_vip);
+		if (remote_host == NULL) {
+			DOCA_LOG_ERR("Failed to find remote host for session %s", ipv4_to_string(psp_session->dst_vip).c_str());
+			return DOCA_ERROR_NOT_FOUND;
+		}
+		else {
+			doca_error_t result = request_tunnel_to_host(remote_host, remote_host->vip, true, true);
+			if (result != DOCA_SUCCESS) {
+				DOCA_LOG_ERR("Failed to update session %s", ipv4_to_string(psp_session->dst_vip).c_str());
+				return result;
+			}
+		}
+	}
+	return DOCA_SUCCESS;
+}
+
 doca_error_t PSP_GatewayImpl::request_tunnel_to_host(struct psp_gw_host *remote_host,
 						     doca_be32_t local_virt_ip,
 						     bool supply_reverse_params,
@@ -354,12 +376,14 @@ doca_error_t PSP_GatewayImpl::generate_tunnel_params(int psp_ver, psp_gateway::T
 						   const ::psp_gateway::KeyRotationRequest *request,
 						   ::psp_gateway::KeyRotationResponse *response)
 {
+	doca_error_t result;
+
 	(void)context;
 	DOCA_LOG_INFO("Received PSP Master Key Rotation Request");
 
 	response->set_request_id(request->request_id());
 
-	doca_error_t result = doca_flow_crypto_psp_master_key_rotate(pf->port_obj);
+	result = doca_flow_crypto_psp_master_key_rotate(pf->port_obj);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_WARN("Key Rotation Failed: %s", doca_error_get_descr(result));
 		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Key Rotation Failed");
@@ -367,19 +391,10 @@ doca_error_t PSP_GatewayImpl::generate_tunnel_params(int psp_ver, psp_gateway::T
 
 	// TODO move this to a separate function
 	if (request->issue_new_keys()) {
-		for (auto &session : sessions) {
-			psp_session_t *psp_session = &session.second;
-			psp_gw_host *remote_host = lookup_remote_host(psp_session->dst_vip);
-			if (remote_host == NULL) {
-				DOCA_LOG_ERR("Failed to find remote host for session %s", ipv4_to_string(psp_session->dst_vip).c_str());
-				return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "Remote host not found");
-			}
-			else {
-				result = request_tunnel_to_host(remote_host, remote_host->vip, true, true);
-				if (result != DOCA_SUCCESS) {
-					return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "tunnel request failed");
-				}
-			}
+		result = update_current_sessions();
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to update current sessions: %s", doca_error_get_descr(result));
+			return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Failed to update current sessions");
 		}
 	}
 

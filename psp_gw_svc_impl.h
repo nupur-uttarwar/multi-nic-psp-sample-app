@@ -88,6 +88,14 @@ public:
 	doca_error_t handle_miss_packet(struct rte_mbuf *packet);
 
 	/**
+	 * @brief Sends a push update to all current sessions. If any of the updates fail,
+	 * 	  fail immediately.
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t update_current_sessions(void);
+
+	/**
 	 * @brief Displays the counters of all tunnel sessions that have
 	 *        changed since the previous invocation.
 	 *
