@@ -381,7 +381,7 @@ doca_error_t PSP_GatewayImpl::generate_tunnel_params(int psp_ver, psp_gateway::T
 				return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "Remote host not found");
 			}
 			else {
-				result = request_tunnel_to_host(remote_host, psp_session->src_vip, true, true);
+				result = request_tunnel_to_host(remote_host, remote_host->vip, true, true);
 				if (result != DOCA_SUCCESS) {
 					return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "tunnel request failed");
 				}

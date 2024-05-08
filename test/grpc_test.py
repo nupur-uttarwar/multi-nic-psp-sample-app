@@ -6,6 +6,7 @@ import os
 from grpc_tools import protoc
 import secrets
 import binascii
+import subprocess
 
 class TestGRPC(unittest.TestCase):
     # Runs once before all tests
@@ -14,7 +15,6 @@ class TestGRPC(unittest.TestCase):
         cur_path = os.path.dirname(os.path.abspath(__file__))
         proto_path = f'{cur_path}/../grpc/'
         proto_file = f'{proto_path}/psp_gateway.proto'
-        grpc_out_path = f'{cur_path}/generated_code'
 
         # Workaround for https://github.com/grpc/grpc/issues/9575
         res = protoc.main([
@@ -26,10 +26,14 @@ class TestGRPC(unittest.TestCase):
             proto_file
         ])
         print(f'gRPC code generation completed with exit code {res}.')
+        if res:
+            raise Exception('gRPC code generation failed.')
 
-        cls.grpc_addr = '10.137.189.69'
-        cls.grpc_port = 3000
-        print(f"Using gRPC address: {cls.grpc_port}.")
+        cmd = "lsof -Pan -i tcp -i udp | grep LISTEN | grep $(ps aux | grep -m1 doca_psp_gateway | awk '{ print $2 }') | awk '{ print $9 }'"
+        addr = subprocess.check_output(cmd, shell=True).decode('utf-8').strip()
+        cls.grpc_addr, cls.grpc_port = addr.split(':')
+
+        print(f"Using gRPC target: {cls.grpc_addr}:{cls.grpc_port}.")
 
     # Runs before each test
     def setUp(self):
