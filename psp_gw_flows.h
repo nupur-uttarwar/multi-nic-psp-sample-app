@@ -134,6 +134,14 @@ public:
 	doca_error_t remove_encrypt_entry(psp_session_t *session);
 
 	/**
+	 * @brief Updates the indicated flow entry.
+	 *
+	 * @session [in]: The session whose associated flows should be updated
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t update_encrypt_entry(psp_session_t *session, const void *encrypt_key);
+
+	/**
 	 * @brief Shows flow counters for pipes which have a fixed number of entries,
 	 *        if any counter values have changed since the last invocation.
 	 */

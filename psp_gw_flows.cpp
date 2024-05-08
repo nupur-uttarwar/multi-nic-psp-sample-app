@@ -864,6 +864,77 @@ doca_error_t PSP_GatewayFlows::remove_encrypt_entry(psp_session_t *session)
 	return result;
 }
 
+doca_error_t PSP_GatewayFlows::update_encrypt_entry(psp_session_t *session, const void *encrypt_key) {
+	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
+	doca_error_t result = DOCA_SUCCESS;
+	std::string dst_pip = ipv6_to_string(session->dst_pip);
+	std::string dst_vip = ipv4_to_string(session->dst_vip);
+
+	DOCA_LOG_INFO("Updating encrypt flow entry: dst_pip %s, dst_vip %s, SPI %d, crypto_id %d",
+		      dst_pip.c_str(),
+		      dst_vip.c_str(),
+		      session->spi_egress,
+		      session->crypto_id);
+
+	struct doca_flow_shared_resource_cfg res_cfg = {};
+	res_cfg.domain = DOCA_FLOW_PIPE_DOMAIN_SECURE_EGRESS;
+	res_cfg.psp_cfg.key_cfg.key_type = session->psp_proto_ver == 0 ? DOCA_FLOW_CRYPTO_KEY_128 :
+									 DOCA_FLOW_CRYPTO_KEY_256;
+	res_cfg.psp_cfg.key_cfg.key = (uint32_t *)encrypt_key;
+
+	result = doca_flow_shared_resource_cfg(DOCA_FLOW_SHARED_RESOURCE_PSP, session->crypto_id, &res_cfg);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to configure crypto_id %d: %s", session->crypto_id, doca_error_get_descr(result));
+		return result;
+	}
+
+	doca_flow_actions encap_actions = {};
+	encap_actions.has_crypto_encap = true;
+	encap_actions.crypto_encap.action_type = DOCA_FLOW_CRYPTO_REFORMAT_ENCAP;
+	encap_actions.crypto_encap.net_type = DOCA_FLOW_CRYPTO_HEADER_PSP_TUNNEL;
+	encap_actions.crypto_encap.icv_size = PSP_ICV_SIZE;
+	encap_actions.crypto_encap.data_size = sizeof(eth_ipv6_psp_tunnel_hdr);
+
+	if (!app_config->net_config.vc_enabled) {
+		encap_actions.crypto_encap.data_size -= sizeof(uint64_t);
+	}
+	format_encap_data(session, encap_actions.crypto_encap.encap_data);
+
+	encap_actions.crypto.action_type = DOCA_FLOW_CRYPTO_ACTION_ENCRYPT;
+	encap_actions.crypto.resource_type = DOCA_FLOW_CRYPTO_RESOURCE_PSP;
+	encap_actions.crypto.crypto_id = session->crypto_id;
+
+	// DOCA_EXPERIMENTAL
+	// doca_error_t doca_flow_pipe_update_entry(uint16_t pipe_queue,
+	// 				 struct doca_flow_pipe *pipe,
+	// 				 const struct doca_flow_actions *actions,
+	// 				 const struct doca_flow_monitor *monitor,
+	// 				 const struct doca_flow_fwd *fwd,
+	// 				 const enum doca_flow_flags_type flags,
+	// 				 struct doca_flow_pipe_entry *entry);
+
+	result = doca_flow_pipe_update_entry(
+		0, // pipe_queue
+		egress_acl_pipe,
+		&encap_actions,
+		nullptr, // monitor
+		nullptr, // fwd
+		DOCA_FLOW_NO_WAIT, // flags
+		session->encap_encrypt_entry);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to update encrypt_encap pipe entry: %s", doca_error_get_descr(result));
+		return result;
+	}
+
+	result = doca_flow_entries_process(pf_dev->port_obj, 0, DEFAULT_TIMEOUT_US, 1 /* num entries */);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to process entry: %s", doca_error_get_descr(result));
+		return result;
+	}
+
+	return result;
+}
+
 doca_error_t PSP_GatewayFlows::egress_sampling_pipe_create(void)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);

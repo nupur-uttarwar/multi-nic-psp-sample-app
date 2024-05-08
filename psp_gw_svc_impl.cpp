@@ -173,6 +173,7 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 						 uint64_t request_id,
 						 const psp_gateway::TunnelParameters &params)
 {
+	doca_error_t result = DOCA_SUCCESS;
 	std::string remote_host_svc_ip = ipv4_to_string(remote_host->svc_ip);
 	std::string remote_host_vip = ipv4_to_string(remote_host->vip);
 
@@ -197,15 +198,27 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 		return DOCA_ERROR_NO_MEMORY;
 	}
 
-	// If there is an existing session, remove it
-	if (sessions.find(remote_host_vip) != sessions.end()) {
-		DOCA_LOG_WARN("Session already exists for remote host %s. Removing it and creating a new one.", remote_host_vip.c_str());
-		release_crypto_id(sessions[remote_host_vip].crypto_id);
-		psp_flows->remove_encrypt_entry(&sessions[remote_host_vip]);
-		sessions.erase(remote_host_vip);
-	}
-
 	const void *encrypt_key = params.encryption_key().c_str();
+
+	// If there is an existing session, we should update it
+	if (sessions.find(remote_host_vip) != sessions.end()) {
+		DOCA_LOG_WARN("Session already exists for remote host %s. Updating it.", remote_host_vip.c_str());
+		psp_session_t *old_session_details = &sessions[remote_host_vip];
+		psp_session_t new_session = *old_session_details;
+		new_session.crypto_id = crypto_id;
+		new_session.spi_egress = params.spi();
+
+		result = psp_flows->update_encrypt_entry(&new_session, encrypt_key);
+		if (result != DOCA_SUCCESS) {
+			release_crypto_id(crypto_id);
+			return result;
+		}
+
+		release_crypto_id(sessions[remote_host_vip].crypto_id);
+		sessions.erase(remote_host_vip);
+		sessions[remote_host_vip] = new_session;
+		return DOCA_SUCCESS;
+	}
 
 	auto &session = sessions[remote_host_vip];
 	session.dst_vip = remote_host->vip;
@@ -217,25 +230,27 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 	if (rte_ether_unformat_addr(params.mac_addr().c_str(), &session.dst_mac)) {
 		DOCA_LOG_ERR("Failed to convert mac addr: %s", params.mac_addr().c_str());
 		sessions.erase(remote_host_vip);
+		release_crypto_id(crypto_id);
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 
 	if (inet_pton(AF_INET6, params.ip_addr().c_str(), session.dst_pip) != 1) {
 		DOCA_LOG_ERR("Failed to parse dst_pip %s", params.ip_addr().c_str());
 		sessions.erase(remote_host_vip);
+		release_crypto_id(crypto_id);
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 
 	DOCA_LOG_INFO("Received tunnel params from %s, SPI %d", remote_host_svc_ip.c_str(), session.spi_egress);
 	debug_key("Received", encrypt_key, params.encryption_key().size());
 
-	doca_error_t result = psp_flows->add_encrypt_entry(&session, encrypt_key);
-
+	result = psp_flows->add_encrypt_entry(&session, encrypt_key);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to create session from %s request %ld: %s",
 			     remote_host_svc_ip.c_str(),
 			     request_id,
 			     doca_error_get_descr(result));
+		release_crypto_id(crypto_id);
 		sessions.erase(remote_host_vip);
 		return result;
 	}
