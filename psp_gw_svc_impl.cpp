@@ -459,7 +459,7 @@ uint32_t PSP_GatewayImpl::allocate_crypto_id(void)
 	auto crypto_id_it = available_crypto_ids.begin();
 	uint32_t crypto_id = *crypto_id_it;
 	available_crypto_ids.erase(crypto_id);
-	DOCA_LOG_INFO("Picked crypto_id %d", crypto_id);
+	DOCA_LOG_DBG("Allocated crypto_id %d", crypto_id);
 	return crypto_id;
 }
 
@@ -469,6 +469,7 @@ void PSP_GatewayImpl::release_crypto_id(uint32_t crypto_id)
 	if (available_crypto_ids.find(crypto_id) != available_crypto_ids.end()) {
 		DOCA_LOG_WARN("Crypto ID %d already released", crypto_id);
 	}
+	DOCA_LOG_DBG("Released crypto_id %d", crypto_id);
 	available_crypto_ids.insert(crypto_id);
 }
 
