@@ -204,8 +204,6 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 
-	// TODO: If there is already a session with the same remote_host->vip, we need to clean it up before creating a new session
-
 	DOCA_LOG_INFO("Received tunnel params from %s, SPI %d", remote_host_svc_ip.c_str(), session.spi_egress);
 	debug_key("Received", encrypt_key, params.encryption_key().size());
 
