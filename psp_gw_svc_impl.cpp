@@ -91,7 +91,7 @@ doca_error_t PSP_GatewayImpl::update_current_sessions()
 			return DOCA_ERROR_NOT_FOUND;
 		}
 		else {
-			doca_error_t result = request_tunnel_to_host(remote_host, remote_host->vip, true, true);
+			doca_error_t result = request_tunnel_to_host(remote_host, config->local_vf_addr_raw, true, true);
 			if (result != DOCA_SUCCESS) {
 				DOCA_LOG_ERR("Failed to update session %s", ipv4_to_string(psp_session->dst_vip).c_str());
 				return result;

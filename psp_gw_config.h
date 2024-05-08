@@ -80,6 +80,7 @@ struct psp_gw_app_config {
 
 	std::string local_svc_addr; //!< The IPv4 addr (and optional port number) of the locally running gRPC service.
 	std::string local_vf_addr;  //!< The IPv4 IP address of the VF; required for create_tunnels_at_startup
+	uint32_t local_vf_addr_raw; //!< The IPv4 IP address of the VF; required for create_tunnels_at_startup
 
 	rte_ether_addr dcap_dmac; //!< The dst mac to apply on decap
 
