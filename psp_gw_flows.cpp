@@ -50,24 +50,6 @@ struct entries_status {
 	int entries_in_queue; /* number of entries in queue that is waiting to process */
 };
 
-/**
- * @brief packet header structure to simplify populating the encap_data array
- */
-struct eth_ipv6_psp_tunnel_hdr {
-	// encapped Ethernet header contents.
-	rte_ether_hdr eth;
-
-	// encapped IP header contents (extension header not supported)
-	rte_ipv6_hdr ip;
-
-	rte_udp_hdr udp;
-
-	// encapped PSP header contents.
-	rte_psp_base_hdr psp;
-	rte_be64_t psp_virt_cookie;
-
-} __rte_packed __rte_aligned(2);
-
 const uint8_t PSP_SAMPLE_ENABLE = 1 << 7;
 
 PSP_GatewayFlows::PSP_GatewayFlows(psp_pf_dev *pf, uint16_t vf_port_id, psp_gw_app_config *app_config)

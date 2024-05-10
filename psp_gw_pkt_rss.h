@@ -14,8 +14,7 @@
 #ifndef _PSP_GW_PKT_RSS_H
 #define _PSP_GW_PKT_RSS_H
 
-// bytes from beginning of packet to the start of the PSP header's SPI
-#define SPI_OFFSET 66
+#include <psp_gw_config.h>
 
 struct psp_gw_app_config;
 class PSP_GatewayFlows;

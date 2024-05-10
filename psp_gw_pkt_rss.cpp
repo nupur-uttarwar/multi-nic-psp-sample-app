@@ -24,15 +24,15 @@
 
 DOCA_LOG_REGISTER(PSP_RSS);
 
-#define MAX_RX_BURST_SIZE 256
+static const uint32_t MAX_RX_BURST_SIZE = 256;
 
 static uint16_t max_tx_retries = 10;
 
 uint32_t get_spi(const struct rte_mbuf *packet)
 {
 	uint32_t spi = UINT32_MAX;
-	uint32_t *spi_addr = NULL;
-	spi_addr = (uint32_t *)rte_pktmbuf_read(packet, SPI_OFFSET, sizeof(spi), &spi);
+	uint32_t *spi_addr =
+		(uint32_t *)rte_pktmbuf_read(packet, offsetof(eth_ipv6_psp_tunnel_hdr, psp.spi), sizeof(spi), &spi);
 	if (spi_addr) {
 		spi = *spi_addr;
 	}
@@ -62,7 +62,7 @@ static void handle_packet(struct lcore_params *params, uint16_t port_id, uint16_
 				      port_id,
 				      queue_id,
 				      pkt_meta,
-					  spi,
+				      spi,
 				      is_ingress_sampled ? "INGRESS" : "EGRESS");
 			rte_pktmbuf_dump(stdout, packet, packet->data_len);
 		}
@@ -78,17 +78,14 @@ static void handle_packet(struct lcore_params *params, uint16_t port_id, uint16_
 		uint16_t ether_type = htons(eth_hdr->ether_type);
 
 		if (ether_type == RTE_ETHER_TYPE_ARP) {
-			DOCA_LOG_INFO("RSS: Received ARP packet on port %d, queue_id %d, pkt_meta 0x%x", port_id, queue_id, pkt_meta);
-			handle_arp(
-				params->config->dpdk_config.mbuf_pool,
-				port_id,
-				queue_id,
-				packet,
-				0);
+			DOCA_LOG_INFO("RSS: Received ARP packet on port %d, queue_id %d, pkt_meta 0x%x",
+				      port_id,
+				      queue_id,
+				      pkt_meta);
+			handle_arp(params->config->dpdk_config.mbuf_pool, port_id, queue_id, packet, 0);
 		} else {
 			params->psp_svc->handle_miss_packet(packet);
 		}
-
 	}
 }
 
@@ -157,52 +154,50 @@ bool reinject_packet(struct rte_mbuf *packet, uint16_t port_id)
 	return nsent == 1;
 }
 
-int
-handle_arp(
-    struct rte_mempool *mpool,
-    uint16_t port_id,
-    uint16_t queue_id,
-    const struct rte_mbuf *request_pkt,
-    uint32_t arp_response_meta_flag)
+int handle_arp(struct rte_mempool *mpool,
+	       uint16_t port_id,
+	       uint16_t queue_id,
+	       const struct rte_mbuf *request_pkt,
+	       uint32_t arp_response_meta_flag)
 {
 	const struct rte_ether_hdr *request_eth_hdr = rte_pktmbuf_mtod(request_pkt, struct rte_ether_hdr *);
-    const struct rte_arp_hdr *request_arp_hdr = (rte_arp_hdr*)&request_eth_hdr[1];
+	const struct rte_arp_hdr *request_arp_hdr = (rte_arp_hdr *)&request_eth_hdr[1];
 
-    uint16_t arp_op = RTE_BE16(request_arp_hdr->arp_opcode);
-    if (arp_op != RTE_ARP_OP_REQUEST) {
-        DOCA_LOG_ERR("RSS ARP Handler: expected op %d, got %d", RTE_ARP_OP_REQUEST, arp_op);
-        return 0;
-    }
+	uint16_t arp_op = RTE_BE16(request_arp_hdr->arp_opcode);
+	if (arp_op != RTE_ARP_OP_REQUEST) {
+		DOCA_LOG_ERR("RSS ARP Handler: expected op %d, got %d", RTE_ARP_OP_REQUEST, arp_op);
+		return 0;
+	}
 
-    struct rte_mbuf *response_pkt = rte_pktmbuf_alloc(mpool);
-    if (!response_pkt) {
-        DOCA_LOG_ERR("Out of memory for ARP response packets; exiting");
-        return ENOMEM;
-    }
+	struct rte_mbuf *response_pkt = rte_pktmbuf_alloc(mpool);
+	if (!response_pkt) {
+		DOCA_LOG_ERR("Out of memory for ARP response packets; exiting");
+		return ENOMEM;
+	}
 
-	*RTE_MBUF_DYNFIELD(response_pkt, rte_flow_dynf_metadata_offs, uint32_t*) = arp_response_meta_flag;
+	*RTE_MBUF_DYNFIELD(response_pkt, rte_flow_dynf_metadata_offs, uint32_t *) = arp_response_meta_flag;
 	response_pkt->ol_flags |= rte_flow_dynf_metadata_mask;
 
-    uint32_t pkt_size = sizeof(struct rte_ether_hdr) + sizeof(struct rte_arp_hdr);
-    response_pkt->data_len = pkt_size;
-    response_pkt->pkt_len = pkt_size;
+	uint32_t pkt_size = sizeof(struct rte_ether_hdr) + sizeof(struct rte_arp_hdr);
+	response_pkt->data_len = pkt_size;
+	response_pkt->pkt_len = pkt_size;
 
 	struct rte_ether_hdr *response_eth_hdr = rte_pktmbuf_mtod(response_pkt, struct rte_ether_hdr *);
-    struct rte_arp_hdr *response_arp_hdr = (rte_arp_hdr*)&response_eth_hdr[1];
+	struct rte_arp_hdr *response_arp_hdr = (rte_arp_hdr *)&response_eth_hdr[1];
 
-    rte_eth_macaddr_get(port_id, &response_eth_hdr->src_addr);
-    response_eth_hdr->dst_addr = request_eth_hdr->src_addr;
-    response_eth_hdr->ether_type = RTE_BE16(RTE_ETHER_TYPE_ARP);
+	rte_eth_macaddr_get(port_id, &response_eth_hdr->src_addr);
+	response_eth_hdr->dst_addr = request_eth_hdr->src_addr;
+	response_eth_hdr->ether_type = RTE_BE16(RTE_ETHER_TYPE_ARP);
 
-    response_arp_hdr->arp_hardware = RTE_BE16(RTE_ARP_HRD_ETHER);
-    response_arp_hdr->arp_protocol = RTE_BE16(RTE_ETHER_TYPE_IPV4);
-    response_arp_hdr->arp_hlen = RTE_ETHER_ADDR_LEN;
-    response_arp_hdr->arp_plen = sizeof(uint32_t);
-    response_arp_hdr->arp_opcode = RTE_BE16(RTE_ARP_OP_REPLY);
-    rte_eth_macaddr_get(port_id, &response_arp_hdr->arp_data.arp_sha);
-    response_arp_hdr->arp_data.arp_tha = request_arp_hdr->arp_data.arp_sha;
-    response_arp_hdr->arp_data.arp_sip = request_arp_hdr->arp_data.arp_tip;
-    response_arp_hdr->arp_data.arp_tip = request_arp_hdr->arp_data.arp_sip;
+	response_arp_hdr->arp_hardware = RTE_BE16(RTE_ARP_HRD_ETHER);
+	response_arp_hdr->arp_protocol = RTE_BE16(RTE_ETHER_TYPE_IPV4);
+	response_arp_hdr->arp_hlen = RTE_ETHER_ADDR_LEN;
+	response_arp_hdr->arp_plen = sizeof(uint32_t);
+	response_arp_hdr->arp_opcode = RTE_BE16(RTE_ARP_OP_REPLY);
+	rte_eth_macaddr_get(port_id, &response_arp_hdr->arp_data.arp_sha);
+	response_arp_hdr->arp_data.arp_tha = request_arp_hdr->arp_data.arp_sha;
+	response_arp_hdr->arp_data.arp_sip = request_arp_hdr->arp_data.arp_tip;
+	response_arp_hdr->arp_data.arp_tip = request_arp_hdr->arp_data.arp_sip;
 
 #if 0
 	DOCA_LOG_INFO("ARP Request:");
@@ -211,18 +206,18 @@ handle_arp(
 	rte_pktmbuf_dump(stdout, response_pkt, response_pkt->data_len);
 #endif
 
-    uint16_t nb_tx_packets = 0;
-    while (nb_tx_packets < 1) {
+	uint16_t nb_tx_packets = 0;
+	while (nb_tx_packets < 1) {
 		// This ARP reply will go to the empty pipe.
-        nb_tx_packets = rte_eth_tx_burst(port_id, queue_id, &response_pkt, 1);
-        if (nb_tx_packets != 1) {
-            DOCA_LOG_WARN("rte_eth_tx_burst returned %d", nb_tx_packets);
-        }
-    }
+		nb_tx_packets = rte_eth_tx_burst(port_id, queue_id, &response_pkt, 1);
+		if (nb_tx_packets != 1) {
+			DOCA_LOG_WARN("rte_eth_tx_burst returned %d", nb_tx_packets);
+		}
+	}
 
-    char ip_addr_str[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &request_arp_hdr->arp_data.arp_tip, ip_addr_str, INET_ADDRSTRLEN);
-    DOCA_LOG_INFO("Handled ARP for IP %s", ip_addr_str);
+	char ip_addr_str[INET_ADDRSTRLEN];
+	inet_ntop(AF_INET, &request_arp_hdr->arp_data.arp_tip, ip_addr_str, INET_ADDRSTRLEN);
+	DOCA_LOG_INFO("Handled ARP for IP %s", ip_addr_str);
 
-    return 1;
+	return 1;
 }

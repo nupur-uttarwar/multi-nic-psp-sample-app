@@ -68,6 +68,24 @@ struct psp_session_t {
 };
 
 /**
+ * @brief packet header structure to simplify populating the encap_data array
+ */
+struct eth_ipv6_psp_tunnel_hdr {
+	// encapped Ethernet header contents.
+	rte_ether_hdr eth;
+
+	// encapped IP header contents (extension header not supported)
+	rte_ipv6_hdr ip;
+
+	rte_udp_hdr udp;
+
+	// encapped PSP header contents.
+	rte_psp_base_hdr psp;
+	rte_be64_t psp_virt_cookie;
+
+} __rte_packed __rte_aligned(2);
+
+/**
  * @brief The entity which owns all the doca flow shared
  *        resources and flow pipes (but not sessions).
  */
