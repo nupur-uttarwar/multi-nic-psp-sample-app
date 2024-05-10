@@ -28,6 +28,17 @@ DOCA_LOG_REGISTER(PSP_RSS);
 
 static uint16_t max_tx_retries = 10;
 
+uint32_t get_spi(const struct rte_mbuf *packet)
+{
+	uint32_t spi = UINT32_MAX;
+	uint32_t *spi_addr = NULL;
+	spi_addr = (uint32_t *)rte_pktmbuf_read(packet, SPI_OFFSET, sizeof(spi), &spi);
+	if (spi_addr) {
+		spi = *spi_addr;
+	}
+	return htonl(spi);
+}
+
 /**
  * @brief High-level Rx Queue packet handler routine
  * Optionally logs the packet to the console.
@@ -46,10 +57,12 @@ static void handle_packet(struct lcore_params *params, uint16_t port_id, uint16_
 	bool is_egress_sampled = pkt_meta == params->config->egress_sample_meta_indicator;
 	if (is_ingress_sampled || is_egress_sampled) {
 		if (params->config->show_sampled_packets) {
-			DOCA_LOG_INFO("SAMPLED PACKET: port %d, queue_id %d, pkt_meta 0x%x, %s",
+			uint32_t spi = get_spi(packet);
+			DOCA_LOG_INFO("SAMPLED PACKET: port %d, queue_id %d, pkt_meta 0x%x, spi 0x%x %s",
 				      port_id,
 				      queue_id,
 				      pkt_meta,
+					  spi,
 				      is_ingress_sampled ? "INGRESS" : "EGRESS");
 			rte_pktmbuf_dump(stdout, packet, packet->data_len);
 		}
