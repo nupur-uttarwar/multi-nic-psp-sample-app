@@ -87,13 +87,54 @@ doca_error_t PSP_GatewayImpl::update_current_sessions()
 		psp_session_t *psp_session = &session.second;
 		psp_gw_host *remote_host = lookup_remote_host(psp_session->dst_vip);
 		if (remote_host == NULL) {
-			DOCA_LOG_ERR("Failed to find remote host for session %s", ipv4_to_string(psp_session->dst_vip).c_str());
+			DOCA_LOG_ERR("Failed to find remote host for session %s",
+				     ipv4_to_string(psp_session->dst_vip).c_str());
 			return DOCA_ERROR_NOT_FOUND;
 		}
-		doca_error_t result = request_tunnel_to_host(remote_host, config->local_vf_addr_raw, true, true);
+
+		std::string remote_host_svc_pip = ipv4_to_string(remote_host->svc_ip);
+		auto *stub = get_stub(remote_host_svc_pip);
+
+		::grpc::ClientContext context;
+		::psp_gateway::UpdateTunnelRequest request;
+		::psp_gateway::UpdateTunnelResponse response;
+		request.set_request_id(++next_request_id);
+		// Note the src/dst are reversed from RequestTunnelParams()
+		request.set_virt_src_ip(config->local_vf_addr);
+		request.set_virt_dst_ip(ipv4_to_string(psp_session->src_vip));
+		doca_error_t result =
+			generate_tunnel_params((int)config->net_config.default_psp_proto_ver, request.mutable_params());
 		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to update session %s", ipv4_to_string(psp_session->dst_vip).c_str());
-			return result;
+			continue;
+		}
+		DOCA_LOG_INFO("Re-generated SPI/Key for %s: new SPI 0x%x",
+			      request.virt_src_ip().c_str(),
+			      request.params().spi());
+
+		::grpc::Status status = stub->UpdateTunnelParams(&context, request, &response);
+		if (!status.ok()) {
+			DOCA_LOG_ERR("Request for new SPI/Key to remote host %s failed: %s",
+				     remote_host_svc_pip.c_str(),
+				     status.error_message().c_str());
+			continue;
+		}
+
+		if (!config->disable_ingress_acl) {
+			psp_session->spi_ingress = request.params().spi();
+
+			// Note the old session.acl_entry should be freed later
+			result = psp_flows->add_ingress_acl_entry(psp_session);
+			if (result != DOCA_SUCCESS) {
+				DOCA_LOG_ERR("Failed to open ACL from %s on SPI 0x%x: %s",
+					     request.virt_src_ip().c_str(),
+					     psp_session->spi_ingress,
+					     doca_error_get_descr(result));
+				return result;
+			}
+
+			DOCA_LOG_INFO("Opened ACL from host %s on SPI 0x%x",
+				      request.virt_src_ip().c_str(),
+				      psp_session->spi_ingress);
 		}
 	}
 	return DOCA_SUCCESS;
@@ -204,8 +245,7 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 	auto existing_session = sessions.find(remote_host_vip);
 	if (existing_session != sessions.end() && existing_session->second.encap_encrypt_entry) {
 		DOCA_LOG_WARN("Session already exists for remote host %s. Updating it.", remote_host_vip.c_str());
-		psp_session_t *old_session_details = &existing_session->second;
-		psp_session_t new_session = *old_session_details;
+		psp_session_t new_session = existing_session->second; // copy
 		new_session.crypto_id = crypto_id;
 		new_session.spi_egress = params.spi();
 
@@ -317,7 +357,9 @@ int PSP_GatewayImpl::select_psp_version(const ::psp_gateway::NewTunnelRequest *r
 			return ::grpc::Status(grpc::INTERNAL, "Failed to create ingress ACL session flow");
 		}
 
-		DOCA_LOG_INFO("Opened ACL from host %s on SPI 0x%x", request->virt_src_ip().c_str(), session.spi_ingress);
+		DOCA_LOG_INFO("Opened ACL from host %s on SPI 0x%x",
+			      request->virt_src_ip().c_str(),
+			      session.spi_ingress);
 	}
 
 	if (request->has_reverse_params()) {
@@ -382,6 +424,68 @@ doca_error_t PSP_GatewayImpl::generate_tunnel_params(int psp_ver, psp_gateway::T
 	debug_key("Generated", key, key_len_bytes);
 
 	return DOCA_SUCCESS;
+}
+
+::grpc::Status PSP_GatewayImpl::UpdateTunnelParams(::grpc::ServerContext *context,
+						   const ::psp_gateway::UpdateTunnelRequest *request,
+						   ::psp_gateway::UpdateTunnelResponse *response)
+{
+	std::string remote_host_svc_ip = context ? context->peer() : "[TESTING]";
+	std::string local_vip = request->virt_dst_ip();
+	std::string remote_vip = request->virt_src_ip();
+
+	// If there is an existing session, we should update it instead of making a new one
+	auto existing_session = sessions.find(remote_vip);
+	if (existing_session == sessions.end() || !existing_session->second.encap_encrypt_entry) {
+		DOCA_LOG_WARN("UpdateTunnelParams: Session not found for remote host %s (%s->%s).",
+			      remote_host_svc_ip.c_str(),
+			      remote_vip.c_str(),
+			      local_vip.c_str());
+		return ::grpc::Status(::grpc::INVALID_ARGUMENT, "Unknown virt_src_ip");
+	}
+
+	doca_error_t result = DOCA_SUCCESS;
+
+	auto &params = request->params();
+	if (!is_psp_ver_supported(params.psp_version())) {
+		DOCA_LOG_ERR("Request for unsupported PSP version %d", params.psp_version());
+		return ::grpc::Status(::grpc::INVALID_ARGUMENT, "Invalid PSP version");
+	}
+
+	uint32_t key_len_bytes = psp_version_to_key_length_bits(params.psp_version()) / 8;
+
+	if (params.encryption_key().size() != key_len_bytes) {
+		DOCA_LOG_ERR("Request for new SPI/Key to remote host %s failed: %s (%ld)",
+			     remote_host_svc_ip.c_str(),
+			     "Invalid encryption key length",
+			     params.encryption_key().size() * 8);
+		return ::grpc::Status(::grpc::INVALID_ARGUMENT, "Invalid key size");
+	}
+
+	uint32_t crypto_id = allocate_crypto_id();
+	if (crypto_id == UINT32_MAX) {
+		DOCA_LOG_ERR("Exhausted available crypto_ids; cannot complete new tunnel");
+		return ::grpc::Status(::grpc::RESOURCE_EXHAUSTED,
+				      "Exhausted available crypto_ids; cannot complete new tunnel");
+	}
+
+	const void *encrypt_key = params.encryption_key().c_str();
+	DOCA_LOG_INFO("Received tunnel params from %s, SPI 0x%x", remote_host_svc_ip.c_str(), params.spi());
+	debug_key("Received", encrypt_key, params.encryption_key().size());
+
+	psp_session_t new_session = existing_session->second; // copy
+	new_session.crypto_id = crypto_id;
+	new_session.spi_egress = params.spi();
+
+	result = psp_flows->update_encrypt_entry(&new_session, encrypt_key);
+	if (result != DOCA_SUCCESS) {
+		release_crypto_id(crypto_id);
+		return ::grpc::Status(::grpc::INTERNAL, "Failed to update tunnel flow");
+	}
+
+	release_crypto_id(existing_session->second.crypto_id);
+	existing_session->second = new_session;
+	return ::grpc::Status::OK;
 }
 
 ::grpc::Status PSP_GatewayImpl::RequestKeyRotation(::grpc::ServerContext *context,
@@ -458,7 +562,6 @@ uint32_t PSP_GatewayImpl::allocate_crypto_id(void)
 	DOCA_LOG_DBG("Allocated crypto_id %d", crypto_id);
 	return crypto_id;
 }
-
 
 void PSP_GatewayImpl::release_crypto_id(uint32_t crypto_id)
 {
