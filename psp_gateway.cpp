@@ -272,7 +272,6 @@ int main(int argc, char **argv)
 			exit_status = EXIT_FAILURE;
 			goto dpdk_destroy;
 		}
-		app_config.local_vf_addr_raw = local_vf_addr;
 
 		std::vector<psp_gw_host> remotes_to_connect;
 		if (app_config.create_tunnels_at_startup) {
