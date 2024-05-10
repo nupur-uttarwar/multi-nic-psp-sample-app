@@ -736,7 +736,7 @@ doca_error_t PSP_GatewayFlows::add_encrypt_entry(psp_session_t *session, const v
 	std::string dst_pip = ipv6_to_string(session->dst_pip);
 	std::string dst_vip = ipv4_to_string(session->dst_vip);
 
-	DOCA_LOG_INFO("Creating encrypt flow entry: dst_pip %s, dst_vip %s, SPI %x, crypto_id %d",
+	DOCA_LOG_INFO("Creating encrypt flow entry: dst_pip %s, dst_vip %s, SPI 0x%x, crypto_id %d",
 		      dst_pip.c_str(),
 		      dst_vip.c_str(),
 		      session->spi_egress,
@@ -852,7 +852,7 @@ doca_error_t PSP_GatewayFlows::update_encrypt_entry(psp_session_t *session, cons
 	std::string dst_pip = ipv6_to_string(session->dst_pip);
 	std::string dst_vip = ipv4_to_string(session->dst_vip);
 
-	DOCA_LOG_INFO("Updating encrypt flow entry: dst_pip %s, dst_vip %s, SPI %x, crypto_id %d",
+	DOCA_LOG_INFO("Updating encrypt flow entry: dst_pip %s, dst_vip %s, SPI 0x%x, crypto_id %d",
 		      dst_pip.c_str(),
 		      dst_vip.c_str(),
 		      session->spi_egress,

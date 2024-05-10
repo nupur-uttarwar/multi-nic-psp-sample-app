@@ -14,8 +14,6 @@
 #ifndef _PSP_GW_PKT_RSS_H
 #define _PSP_GW_PKT_RSS_H
 
-#include <psp_gw_config.h>
-
 struct psp_gw_app_config;
 class PSP_GatewayFlows;
 class PSP_GatewayImpl;
