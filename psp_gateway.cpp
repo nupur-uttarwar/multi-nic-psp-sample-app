@@ -213,7 +213,7 @@ int main(int argc, char **argv)
 	}
 
 	{
-		PSP_GatewayFlows psp_flows(&pf_dev, vf_port_id, &app_config);
+		PSP_GatewayFlows psp_flows(app_config.pf_pcie_addr, &app_config);
 
 		result = psp_flows.init();
 		if (result != DOCA_SUCCESS) {
@@ -272,7 +272,7 @@ int main(int argc, char **argv)
 			sleep(1);
 
 			if (app_config.print_stats) {
-				psp_flows.show_static_flow_counts();
+				// psp_flows.show_static_flow_counts();
 				psp_svc.show_flow_counts();
 			}
 		}

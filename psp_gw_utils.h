@@ -55,4 +55,13 @@ std::string mac_to_string(const rte_ether_addr &mac_addr);
  */
 bool is_empty_mac_addr(const rte_ether_addr &addr);
 
+/**
+ * @brief Returns the number of bits of the key size as determined
+ * by the given PSP protocol version.
+ *
+ * @psp_proto_ver [in]: the PSP protocol version
+ * @return: 128 or 256 depending on the key type
+ */
+uint32_t psp_version_to_key_length_bits(uint32_t psp_proto_ver);
+
 #endif /* _PSP_GW_UTILS_H_ */

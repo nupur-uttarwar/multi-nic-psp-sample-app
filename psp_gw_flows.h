@@ -55,28 +55,44 @@ struct psp_pf_dev {
 	std::string src_pip_str;
 };
 
+struct psp_session_desc_t {
+	std::string local_vip;
+	std::string remote_vip;
+	std::string remote_pip;
+};
+
 /**
  * @brief describes a PSP tunnel connection to a single address
  *        on a remote host
  */
-struct psp_session_t {
-	rte_ether_addr dst_mac;
-
-	struct doca_flow_ip_addr dst_pip; //!< Physical/Outer IP addr
-	doca_be32_t dst_vip;		  //!< Virtual/Innter IP addr
-	doca_be32_t src_vip;		  //!< Virtual/Innter IP addr
+struct psp_session_egress_t {
+	struct psp_session_desc_t key;
 
 	uint32_t spi_egress;  //!< Security Parameter Index on the wire - host-to-net
-	uint32_t spi_ingress; //!< Security Parameter Index on the wire - net-to-host
 	uint32_t crypto_id;   //!< Internal shared-resource index
-
-	uint32_t psp_proto_ver; //!< PSP protocol version used by this session
 	uint64_t vc;		//!< Virtualization cookie, if enabled
 
 	doca_flow_pipe_entry *encap_encrypt_entry;
-	doca_flow_pipe_entry *acl_entry;
-	uint64_t pkt_count_egress;  //!< count of encap_encrypt_entry
-	uint64_t pkt_count_ingress; //!< count of acl_entry
+	uint64_t pkt_count_egress;
+};
+
+/**
+ * @brief describes a PSP tunnel connection from a single address
+ *        on a remote host
+ */
+struct psp_session_ingress_t {
+	struct psp_session_desc_t key;
+
+	uint32_t spi_ingress; //!< Security Parameter Index on the wire - net-to-host
+
+	struct doca_flow_pipe_entry *ingress_acl_entry;
+	uint64_t pkt_count_ingress;
+};
+
+
+struct spi_key_t {
+	uint64_t spi;
+	void *key;
 };
 
 /**
@@ -87,27 +103,16 @@ class PSP_GatewayFlows {
 public:
 	/**
 	 * @brief Constructs the object. This operation cannot fail.
-	 * @param [in] pf The Host PF object, already opened and probed,
-	 *        but not started, by DOCA, of the device which sends
-	 *        and receives encrypted packets
-	 * @param [in] vf_port_id The port_id of the device which sends
-	 *        and received plaintext packets.
+	 * @param [in] pf_pci The PCI address of the PF device
+	 * @param [in] app_config The application configuration
 	 */
-	PSP_GatewayFlows(psp_pf_dev *pf, uint16_t vf_port_id, psp_gw_app_config *app_config);
+	PSP_GatewayFlows(std::string pf_pci, psp_gw_app_config *app_config);
 
 	/**
 	 * Deallocates all associated DOCA objects.
 	 * In case of failure, an error is logged and progress continues.
 	 */
 	virtual ~PSP_GatewayFlows(void);
-
-	/**
-	 * Exposes the host PF device. (Used by the benchmarking functions.)
-	 */
-	psp_pf_dev *pf()
-	{
-		return pf_dev;
-	}
 
 	/**
 	 * @brief Initialized the DOCA resources.
@@ -117,292 +122,74 @@ public:
 	doca_error_t init(void);
 
 	/**
-	 * @brief Adds a flow pipe entry to perform encryption on a new flow
-	 *        to the indicated remote host.
-	 * The caller is responsible for negotiating the SPI and key, and
-	 * assigning a unique crypto_id.
+	 * @brief Rotate the master key.
 	 *
-	 * @session [in]: the session for which an encryption flow should be created
-	 * @encrypt_key [in]: the encryption key to use for the session
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	doca_error_t add_encrypt_entry(psp_session_t *session, const void *encrypt_key);
+	doca_error_t rotate_master_key(void);
 
 	/**
-	 * @brief Adds an ingress ACL entry for the given session to accept
-	 *        the combination of src_vip and SPI.
+	 * @brief Re-generate all current ingress paths with new SPIs and keys.
+	 * @param [out] sessions The sessions which were successfully updated
+	 * @param [out] spi_keys The SPIs and keys to use for each session. Invalid if
+	 * 	  the return value is DOCA_ERROR.
 	 *
-	 * @session [in]: the session for which an ingress ACL flow should be created
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	doca_error_t add_ingress_acl_entry(psp_session_t *session);
+	std::vector<doca_error_t> update_ingress_paths(
+		const std::vector<psp_session_desc_t> &sessions,
+		const std::vector<struct spi_key_t> &spi_keys
+	);
 
 	/**
-	 * @brief Removes the indicated flow entry.
+	 * @brief Create new ingress paths.
+	 * @param [in] sessions The sessions to update
+	 * @param [out] spi_keys The SPIs and keys to use for each session. Invalid if
+	 * 	  the return value is DOCA_ERROR.
 	 *
-	 * @session [in]: The session whose associated flows should be removed
+	 * @return: vector of DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	std::vector<doca_error_t> create_ingress_paths(
+		const std::vector<struct psp_session_desc_t> &sessions,
+		const std::vector<struct spi_key_t> &spi_keys
+	);
+
+	/**
+	 * @brief Delete the indicated ingress paths.
+	 * @param [in] sessions The sessions to delete
+	 *
+	 * @return: vector of DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	std::vector<doca_error_t> delete_ingress_paths(
+		const std::vector<psp_session_desc_t> &sessions
+	);
+
+	/**
+	 * @brief Set the egress path for sessions[i] to use spi[i] and key[i]
+	 * @param [in] sessions The sessions to update
+	 * @param [in] spi_keys The SPIs and keys to use for each session.
+	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	doca_error_t remove_encrypt_entry(psp_session_t *session);
-
-	/**
-	 * @brief Shows flow counters for pipes which have a fixed number of entries,
-	 *        if any counter values have changed since the last invocation.
-	 */
-	void show_static_flow_counts(void);
-
-	/**
-	 * @brief Shows flow counters for the given tunnel, if they have changed
-	 *        since the last invocation.
-	 *
-	 * @dst_vip [in]: stringified dst IP, to avoid repeating the conversion
-	 * @session [in/out]: the object which holds the flow entries
-	 */
-	void show_session_flow_count(const std::string &dst_vip, psp_session_t &session);
+	std::vector<doca_error_t> set_egress_paths(
+		const std::vector<psp_session_desc_t> &sessions,
+		const std::vector<struct spi_key_t> &spi_keys
+	);
 
 private:
-	/**
-	 * @brief Private structure used to display flow query results
-	 */
-	struct pipe_query;
 
-	/**
-	 * @brief Callback which is invoked to check the status of every entry
-	 *        added to a flow pipe. See doca_flow_entry_process_cb.
-	 *
-	 * @entry [in]: The entry which was added/removed/updated
-	 * @pipe_queue [in]: The index of the associated queue
-	 * @status [in]: The result of the operation
-	 * @op [in]: The type of the operation
-	 * @user_ctx [in]: The argument supplied to add_entry, etc.
-	 */
-	static void check_for_valid_entry(doca_flow_pipe_entry *entry,
-					  uint16_t pipe_queue,
-					  enum doca_flow_entry_status status,
-					  enum doca_flow_entry_op op,
-					  void *user_ctx);
-
-	/**
-	 * @brief Starts the given port (with optional dev pointer) to create
-	 *        a doca flow port.
-	 *
-	 * @port_id [in]: the numerical index of the port
-	 * @port_dev [in]: the doca_dev returned from doca_dev_open()
-	 * @port [out]: the resulting port object
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t start_port(uint16_t port_id, doca_dev *port_dev, doca_flow_port **port);
-
-	/**
-	 * @brief handles the initialization of doca_flow
-	 *
-	 * @app_cfg [in]: the psp app configuration
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t init_doca_flow(const psp_gw_app_config *app_cfg);
-
-	/**
-	 * @brief handles the binding of the shared resources to ports
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t bind_shared_resources(void);
-
-	/**
-	 * @brief handles the setup of the packet mirroring shared resources
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t configure_mirrors(void);
-
-	/**
-	 * @brief wrapper for doca_flow_pipe_add_entry()
-	 * Handles the call to process_entry and its callback for a single entry.
-	 *
-	 * @pipe_queue [in]: the queue index associated with the caller cpu core
-	 * @pipe [in]: the pipe on which to add the entry
-	 * @port [in]: the port which owns the pipe
-	 * @match [in]: packet match criteria
-	 * @actions [in]: packet mod actions
-	 * @mon [in]: packet monitoring actions
-	 * @fwd [in]: packet forwarding actions
-	 * @entry [out]: the newly created flow entry
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t add_single_entry(uint16_t pipe_queue,
-				      doca_flow_pipe *pipe,
-				      doca_flow_port *port,
-				      const doca_flow_match *match,
-				      const doca_flow_actions *actions,
-				      const doca_flow_monitor *mon,
-				      const doca_flow_fwd *fwd,
-				      doca_flow_pipe_entry **entry);
-
-	/**
-	 * Generates the outer/encap header contents for a given session for ipv6 encap
-	 *
-	 * @session [in]: the remote host mac/ip/etc. to encap
-	 * @encap_data [out]: the actions.crypto_encap.encap_data to populate
-	 */
-	void format_encap_data_ipv6(const psp_session_t *session, uint8_t *encap_data);
-
-	/**
-	 * Generates the outer/encap header contents for a given session for ipv4 encap
-	 *
-	 * @session [in]: the remote host mac/ip/etc. to encap
-	 * @encap_data [out]: the actions.crypto_encap.encap_data to populate
-	 */
-	void format_encap_data_ipv4(const psp_session_t *session, uint8_t *encap_data);
-
-	/**
-	 * Top-level pipe creation method
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t create_pipes(void);
-
-	/**
-	 * Creates the PSP decryption pipe.
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t ingress_decrypt_pipe_create(void);
-
-	/**
-	 * Creates the pipe to sample packets with the PSP.S bit set
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t ingress_sampling_pipe_create(void);
-
-	/**
-	 * Creates the pipe to only accept incoming packets from
-	 * appropriate sources.
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t ingress_acl_pipe_create(void);
-
-	/**
-	 * Creates the pipe which counts the various syndrome types
-	 * and drops the packets
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t syndrome_stats_pipe_create(void);
-
-	/**
-	 * Creates the pipe to trap outgoing packets to unregistered destinations
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t egress_acl_pipe_create(void);
-
-	/**
-	 * Creates the pipe to mark and randomly sample outgoing packets
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t egress_sampling_pipe_create(void);
-
-	/**
-	 * Creates the entry point to the CPU Rx queues
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t rss_pipe_create(void);
-
-	/**
-	 * @brief Creates the first pipe hit by packets arriving to
-	 * the eswitch from either the uplink (wire) or the VF.
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t ingress_root_pipe_create(void);
-
-	/**
-	 * @brief Creates a pipe whose only purpose is to relay
-	 * flows from the egress domain to the secure-egress domain,
-	 * and to relay injected ARP responses back to the VF.
-	 *
-	 * @next_pipe [in]: The pipe to which the empty pipe
-	 * should forward its traffic.
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t empty_pipe_create(doca_flow_pipe *next_pipe);
-
-	/**
-	 * @brief Creates a pipe to fwd packets to port
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t empty_pipe_create_not_sampled(void);
-
-	/**
-	 * @brief Performs a flow query and logs the result.
-	 *
-	 * @query [in]: The pipe and/or entries to query
-	 * @suppress_output [in]: Whether to log the query results or
-	 * simply count them
-	 * @return: A pair of counters (hits, misses)
-	 */
-	std::pair<uint64_t, uint64_t> perform_pipe_query(pipe_query *query, bool suppress_output);
+	bool sampling_enabled (void) {
+		return app_config->log2_sample_rate > 0;
+	}
 
 	// Application state data:
-
 	psp_gw_app_config *app_config{};
-
+	std::string pf_pci;
 	psp_pf_dev *pf_dev{};
-
 	uint16_t vf_port_id{UINT16_MAX};
+	struct doca_flow_port *vf_port{};
 
-	doca_flow_port *vf_port{};
-
-	bool sampling_enabled{false};
-
-	// Pipe and pipe entry application state:
-
-	// general pipes
-	doca_flow_pipe *rss_pipe{};
-	doca_flow_pipe *ingress_root_pipe{};
-
-	// net-to-host pipes
-	doca_flow_pipe *ingress_decrypt_pipe{};
-	doca_flow_pipe *ingress_sampling_pipe{};
-	doca_flow_pipe *ingress_acl_pipe{};
-
-	// host-to-net pipes
-	doca_flow_pipe *egress_acl_pipe{};
-	doca_flow_pipe *egress_sampling_pipe{};
-	doca_flow_pipe *egress_encrypt_pipe{};
-	doca_flow_pipe *syndrome_stats_pipe{};
-	doca_flow_pipe *empty_pipe{};
-	doca_flow_pipe *empty_pipe_not_sampled{};
-
-	// static pipe entries
-	doca_flow_pipe_entry *default_rss_entry{};
-	doca_flow_pipe_entry *default_decrypt_entry{};
-	doca_flow_pipe_entry *default_ingr_sampling_entry{};
-	doca_flow_pipe_entry *default_ingr_acl_entry{};
-	doca_flow_pipe_entry *default_egr_sampling_entry{};
-	doca_flow_pipe_entry *root_jump_to_ingress_ipv6_entry{};
-	doca_flow_pipe_entry *root_jump_to_ingress_ipv4_entry{};
-	doca_flow_pipe_entry *root_jump_to_egress_entry{};
-	doca_flow_pipe_entry *vf_arp_to_rss{};
-	doca_flow_pipe_entry *syndrome_stats_entries[NUM_OF_PSP_SYNDROMES]{};
-	doca_flow_pipe_entry *empty_pipe_entry{};
-	doca_flow_pipe_entry *root_default_drop{};
-
-	// commonly used setting to enable per-entry counters
-	struct doca_flow_monitor monitor_count {};
-
-	// Shared resource IDs
-	uint32_t mirror_res_id{1};
-	uint32_t mirror_res_id_port{2};
-
-	// Sum of all static pipe entries the last time
-	// show_static_flow_counts() was invoked.
-	uint64_t prev_static_flow_count{UINT64_MAX};
+	struct doca_flow_monitor monitor_count{};
 };
 
 #endif /* FLOWS_H_ */
