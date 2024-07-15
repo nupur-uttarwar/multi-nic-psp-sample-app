@@ -1,13 +1,25 @@
 /*
- * Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES, ALL RIGHTS RESERVED.
+ * Copyright (c) 2024 NVIDIA CORPORATION AND AFFILIATES.  All rights reserved.
  *
- * This software product is a proprietary product of NVIDIA CORPORATION &
- * AFFILIATES (the "Company") and all right, title, and interest in and to the
- * software product, including all associated intellectual property rights, are
- * and shall remain exclusively with the Company.
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright notice, this list of
+ *       conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright notice, this list of
+ *       conditions and the following disclaimer in the documentation and/or other materials
+ *       provided with the distribution.
+ *     * Neither the name of the NVIDIA CORPORATION nor the names of its contributors may be used
+ *       to endorse or promote products derived from this software without specific prior written
+ *       permission.
  *
- * This software product is governed by the End User License Agreement
- * provided with the software product.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TOR (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -27,6 +39,8 @@
 struct psp_pf_dev;
 struct doca_flow_crypto_psp_spi_key_bulk;
 
+typedef std::pair<psp_session_t *, void *> psp_session_and_key_t;
+
 /**
  * @brief Implementation of the PSP_Gateway service.
  *
@@ -39,7 +53,7 @@ struct doca_flow_crypto_psp_spi_key_bulk;
  * creates the flows required to send encrypted packets back
  * to the requestor.
  *
- * As a client, generates parameteres for a remote service to
+ * As a client, generates parameters for a remote service to
  * send encrypted packets, and sends them as part of the request.
  */
 class PSP_GatewayImpl : public psp_gateway::PSP_Gateway::Service {
@@ -54,7 +68,7 @@ public:
 	PSP_GatewayImpl(psp_gw_app_config *config, PSP_GatewayFlows *psp_flows);
 
 	/**
-	 * @brief Requests that the recipient allocate a new SPI and encryption key
+	 * @brief Requests that the recipient allocate multiple SPIs and encryption keys
 	 * so that the initiator can begin sending encrypted traffic.
 	 *
 	 * @context [in]: grpc context
@@ -62,13 +76,9 @@ public:
 	 * @response [out]: requested outputs
 	 * @return: Indicates success/failure of the request
 	 */
-	::grpc::Status RequestTunnelParams(::grpc::ServerContext *context,
-					   const ::psp_gateway::NewTunnelRequest *request,
-					   ::psp_gateway::NewTunnelResponse *response) override;
-
-	::grpc::Status UpdateTunnelParams(::grpc::ServerContext *context,
-					  const ::psp_gateway::UpdateTunnelRequest *request,
-					  ::psp_gateway::UpdateTunnelResponse *response) override;
+	::grpc::Status RequestMultipleTunnelParams(::grpc::ServerContext *context,
+						   const ::psp_gateway::MultiTunnelRequest *request,
+						   ::psp_gateway::MultiTunnelResponse *response) override;
 
 	/**
 	 * @brief Requests that the recipient rotate the PSP master key.
@@ -83,21 +93,13 @@ public:
 					  ::psp_gateway::KeyRotationResponse *response) override;
 
 	/**
-	 * @brief Handles any "miss" packets recieved by RSS which indicate
+	 * @brief Handles any "miss" packets received by RSS which indicate
 	 *        a new tunnel connection is needed.
 	 *
 	 * @packet [in]: The packet received from RSS
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
 	doca_error_t handle_miss_packet(struct rte_mbuf *packet);
-
-	/**
-	 * @brief Sends a push update to all current sessions. If any of the updates fail,
-	 * 	  fail immediately.
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t update_current_sessions(void);
 
 	/**
 	 * @brief Displays the counters of all tunnel sessions that have
@@ -140,28 +142,21 @@ private:
 	 *
 	 * @remote_host [in]: The remote host to which we will create a tunnel
 	 * @local_virt_ip [in]: The destination virtual IP address for the return traffic
+	 * @remote_virt_ip [in]: The destination virtual IP address for the outgoing traffic
 	 * @supply_reverse_params [in]: Whether to include tunnel parameters for traffic
 	 * returning to the sender of the request.
 	 * @suppress_failure_msg [in]: Indicates we are okay with a failure to connect, such
 	 * as during application startup.
+	 * @has_remote [in]: true if remote_virt_ip was send to the function -
+	 * when true, generate one pair of SPI and key and insert one rule
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
 	doca_error_t request_tunnel_to_host(struct psp_gw_host *remote_host,
 					    doca_be32_t local_virt_ip,
+					    doca_be32_t remote_virt_ip,
 					    bool supply_reverse_params,
-					    bool suppress_failure_msg);
-
-	/**
-	 * @brief Creates the flow entries for a given session
-	 *
-	 * @remote_host [in]: the remote host for which flow rules will be created
-	 * @request_id [in]: the request to log in case of error
-	 * @params [in]: the crypto/encap parameteres received from gRPC
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t create_tunnel_flow(const struct psp_gw_host *remote_host,
-					uint64_t request_id,
-					const psp_gateway::TunnelParameters &params);
+					    bool suppress_failure_msg,
+					    bool has_remote);
 
 	/**
 	 * @brief Returns a gRPC client for a given remote host
@@ -187,7 +182,7 @@ private:
 	 * @return: the supported version number, or -1 if no acceptable
 	 * version was requested.
 	 */
-	int select_psp_version(const ::psp_gateway::NewTunnelRequest *request) const;
+	int select_psp_version(const ::psp_gateway::MultiTunnelRequest *request) const;
 
 	/**
 	 * @brief Checks whether the given PSP version is supported
@@ -201,22 +196,48 @@ private:
 	}
 
 	/**
-	 * @brief Generates a new SPI/key pair and writes the new SPI/Key
-	 * and all required PF attributes to a gRPC request object.
+	 * @brief writes the new SPI/Key and all required PF attributes to a gRPC request object.
 	 *
-	 * @psp_ver [in]: The PSP version (key length) to use for the session
-	 * @params [in/out]: The gRPC request object to populate
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 * @psp_ver [in]: The PSP version to use for encryption
+	 * @key [in]: The key to use for encryption
+	 * @spi [in]: The SPI to use for encryption
+	 * @params [out]: The gRPC object to populate with the new SPI/key
 	 */
-	doca_error_t generate_tunnel_params(int psp_ver, psp_gateway::TunnelParameters *params);
+	void fill_tunnel_params(int psp_ver, uint32_t *key, uint32_t spi, psp_gateway::TunnelParameters *params);
 
 	/**
-	 * @brief Allocates the spi/key bulk generator, if it does not exist yet
+	 * @brief Generates new SPI/key pairs
 	 *
-	 * @key_size_bits [in]: 128 or 256
-	 * @return: The allocated bulk generator
+	 * @key_len_bits [in]: 128 or 256
+	 * @nr_keys_spis [in]: The number of SPIs/keys to generate
+	 * @keys [out]: The generated keys
+	 * @spis [out]: The generated SPIs
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	struct doca_flow_crypto_psp_spi_key_bulk *get_bulk_key_gen(uint32_t key_size_bits);
+	doca_error_t generate_keys_spis(uint32_t key_len_bits, uint32_t nr_keys_spis, uint32_t *keys, uint32_t *spis);
+
+	/**
+	 * @brief Adds encryption entries to pipeline according to sessions
+	 *
+	 * @new_sessions_keys [in]: The new sessions to create entries for
+	 * @remote_host_svc_ip [in]: The remote host to which we will create a tunnel
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t add_encrypt_entries(std::vector<psp_session_and_key_t> &new_sessions_keys,
+					 std::string remote_host_svc_ip);
+	/**
+	 * @brief Prepares the session for the given remote host virtual IP
+	 *
+	 * @remote_host_svc_ip [in]: The remote host to which we will create a tunnel
+	 * @remote_vip [in]: The destination virtual IP address for the return traffic
+	 * @params [in]: The parameters for the tunnel
+	 * @sessions_keys_prepared [out]: The session will be added to this vector
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t prepare_session(std::string remote_host_svc_ip,
+				     doca_be32_t remote_vip,
+				     const psp_gateway::TunnelParameters &params,
+				     std::vector<psp_session_and_key_t> &sessions_keys_prepared);
 
 	/**
 	 * @brief Dumps the hex bytes of the given PSP key
@@ -233,14 +254,7 @@ private:
 	 *
 	 * @return: The crypto_id to use for the PSP shared resource
 	 */
-	uint32_t allocate_crypto_id(void);
-
-	/**
-	 * @brief Releases the given crypto_id so that it can be reused
-	 *
-	 * @crypto_id [in]: The crypto_id to release
-	 */
-	void release_crypto_id(uint32_t crypto_id);
+	uint32_t next_crypto_id(void);
 
 	// Application state data:
 
@@ -249,9 +263,6 @@ private:
 	PSP_GatewayFlows *psp_flows{};
 
 	psp_pf_dev *pf{};
-
-	doca_flow_crypto_psp_spi_key_bulk *bulk_key_gen_128{};
-	doca_flow_crypto_psp_spi_key_bulk *bulk_key_gen_256{};
 
 	// Used to uniquely populate the request ID in each NewTunnelRequest message.
 	uint64_t next_request_id{};
@@ -266,7 +277,7 @@ private:
 	std::map<std::string, psp_session_t> sessions;
 
 	// Used to assign a unique shared-resource ID to each encryption flow.
-	std::set<uint32_t> available_crypto_ids;
+	uint32_t next_crypto_id_ = 1;
 };
 
 #endif // _PSP_GW_SVC_H

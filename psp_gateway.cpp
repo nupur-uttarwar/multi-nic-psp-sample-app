@@ -1,13 +1,25 @@
 /*
- * Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES, ALL RIGHTS RESERVED.
+ * Copyright (c) 2024 NVIDIA CORPORATION AND AFFILIATES.  All rights reserved.
  *
- * This software product is a proprietary product of NVIDIA CORPORATION &
- * AFFILIATES (the "Company") and all right, title, and interest in and to the
- * software product, including all associated intellectual property rights, are
- * and shall remain exclusively with the Company.
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright notice, this list of
+ *       conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright notice, this list of
+ *       conditions and the following disclaimer in the documentation and/or other materials
+ *       provided with the distribution.
+ *     * Neither the name of the NVIDIA CORPORATION nor the names of its contributors may be used
+ *       to endorse or promote products derived from this software without specific prior written
+ *       permission.
  *
- * This software product is governed by the End User License Agreement
- * provided with the software product.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TOR (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -33,7 +45,6 @@
 
 // application
 #include <psp_gw_config.h>
-#include <psp_gw_bench.h>
 #include <psp_gw_flows.h>
 #include <psp_gw_svc_impl.h>
 #include <psp_gw_params.h>
@@ -89,6 +100,7 @@ int main(int argc, char **argv)
 	app_config.show_sampled_packets = true;
 	app_config.show_rss_rx_packets = false;
 	app_config.show_rss_durations = false;
+	app_config.outer = DOCA_FLOW_L3_TYPE_IP6;
 
 	struct psp_pf_dev pf_dev = {};
 	uint16_t vf_port_id;
@@ -161,42 +173,36 @@ int main(int argc, char **argv)
 	app_config.dpdk_config.port_config.nb_ports = rte_eth_dev_count_avail();
 
 	rte_eth_macaddr_get(pf_dev.port_id, &pf_dev.src_mac);
-	result = doca_devinfo_get_ipv6_addr(doca_dev_as_devinfo(pf_dev.dev),
-					    pf_dev.src_pip,
-					    DOCA_DEVINFO_IPV6_ADDR_SIZE);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to find IPv6 addr for PF: %s", doca_error_get_descr(result));
-		return result;
+	pf_dev.src_mac_str = mac_to_string(pf_dev.src_mac);
+
+	if (app_config.outer == DOCA_FLOW_L3_TYPE_IP4) {
+		pf_dev.src_pip.type = DOCA_FLOW_L3_TYPE_IP4;
+		result = doca_devinfo_get_ipv4_addr(doca_dev_as_devinfo(pf_dev.dev),
+						    (uint8_t *)&pf_dev.src_pip.ipv4_addr,
+						    DOCA_DEVINFO_IPV4_ADDR_SIZE);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to find IPv4 addr for PF: %s", doca_error_get_descr(result));
+			return result;
+		}
+		pf_dev.src_pip_str = ipv4_to_string(pf_dev.src_pip.ipv4_addr);
+	} else {
+		result = doca_devinfo_get_ipv6_addr(doca_dev_as_devinfo(pf_dev.dev),
+						    (uint8_t *)pf_dev.src_pip.ipv6_addr,
+						    DOCA_DEVINFO_IPV6_ADDR_SIZE);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to find IPv6 addr for PF: %s", doca_error_get_descr(result));
+			return result;
+		}
+		pf_dev.src_pip_str = ipv6_to_string(pf_dev.src_pip.ipv6_addr);
 	}
 
-	pf_dev.src_mac_str = mac_to_string(pf_dev.src_mac);
-	pf_dev.src_pip_str = ipv6_to_string(pf_dev.src_pip);
-	DOCA_LOG_INFO("Port %d: Detected PF mac addr: %s, IPv6 addr: %s, total ports: %d",
+	DOCA_LOG_INFO("Port %d: Detected PF mac addr: %s, IP addr: %s, total ports: %d",
 		      pf_dev.port_id,
 		      pf_dev.src_mac_str.c_str(),
 		      pf_dev.src_pip_str.c_str(),
 		      app_config.dpdk_config.port_config.nb_ports);
 
 	vf_port_id = pf_dev.port_id + 1;
-
-	if (app_config.nexthop_enable && !app_config.nexthop_dmac_lookup.empty()) {
-		bool my_pf_found = false;
-		for (const auto &pf_nh_pair : app_config.nexthop_dmac_lookup) {
-			rte_ether_addr pf_mac;
-			(void)rte_ether_unformat_addr(pf_nh_pair.first.c_str(), &pf_mac);
-			if (rte_is_same_ether_addr(&pf_mac, &pf_dev.src_mac)) {
-				(void)rte_ether_unformat_addr(pf_nh_pair.second.c_str(), &app_config.nexthop_dmac);
-				my_pf_found = true;
-				DOCA_LOG_INFO("Selected next-hop %s", pf_nh_pair.second.c_str());
-				break;
-			}
-		}
-		if (!my_pf_found) {
-			DOCA_LOG_ERR("A next-hop file was specified, but my PF MAC (%s) was not found",
-				     pf_dev.src_mac_str.c_str());
-			return result;
-		}
-	}
 
 	// Update queues and ports
 	result = dpdk_queues_and_ports_init(&app_config.dpdk_config);
@@ -206,23 +212,7 @@ int main(int argc, char **argv)
 		goto dpdk_destroy;
 	}
 
-	if (app_config.run_benchmarks_and_exit) {
-		app_config.max_tunnels = 64 * 1024;
-		doca_log_level_set_global_lower_limit(DOCA_LOG_LEVEL_WARNING);
-
-		PSP_GatewayFlows psp_flows(&pf_dev, vf_port_id, &app_config);
-
-		result = psp_flows.init();
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to create flow pipes");
-			exit_status = EXIT_FAILURE;
-			goto dpdk_destroy;
-		}
-
-		if (app_config.run_benchmarks_and_exit) {
-			psp_gw_run_benchmarks(&psp_flows);
-		}
-	} else {
+	{
 		PSP_GatewayFlows psp_flows(&pf_dev, vf_port_id, &app_config);
 
 		result = psp_flows.init();
@@ -281,8 +271,10 @@ int main(int argc, char **argv)
 			psp_svc.try_connect(remotes_to_connect, local_vf_addr);
 			sleep(1);
 
-			psp_flows.show_static_flow_counts();
-			psp_svc.show_flow_counts();
+			if (app_config.print_stats) {
+				psp_flows.show_static_flow_counts();
+				psp_svc.show_flow_counts();
+			}
 		}
 
 		DOCA_LOG_INFO("Shutting down");

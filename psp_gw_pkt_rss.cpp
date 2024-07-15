@@ -1,13 +1,25 @@
 /*
- * Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES, ALL RIGHTS RESERVED.
+ * Copyright (c) 2024 NVIDIA CORPORATION AND AFFILIATES.  All rights reserved.
  *
- * This software product is a proprietary product of NVIDIA CORPORATION &
- * AFFILIATES (the "Company") and all right, title, and interest in and to the
- * software product, including all associated intellectual property rights, are
- * and shall remain exclusively with the Company.
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright notice, this list of
+ *       conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright notice, this list of
+ *       conditions and the following disclaimer in the documentation and/or other materials
+ *       provided with the distribution.
+ *     * Neither the name of the NVIDIA CORPORATION nor the names of its contributors may be used
+ *       to endorse or promote products derived from this software without specific prior written
+ *       permission.
  *
- * This software product is governed by the End User License Agreement
- * provided with the software product.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TOR (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -24,20 +36,9 @@
 
 DOCA_LOG_REGISTER(PSP_RSS);
 
-static const uint32_t MAX_RX_BURST_SIZE = 256;
+#define MAX_RX_BURST_SIZE 256
 
 static uint16_t max_tx_retries = 10;
-
-uint32_t get_spi(const struct rte_mbuf *packet)
-{
-	uint32_t spi = UINT32_MAX;
-	uint32_t *spi_addr =
-		(uint32_t *)rte_pktmbuf_read(packet, offsetof(eth_ipv6_psp_tunnel_hdr, psp.spi), sizeof(spi), &spi);
-	if (spi_addr) {
-		spi = *spi_addr;
-	}
-	return htonl(spi);
-}
 
 /**
  * @brief High-level Rx Queue packet handler routine
@@ -57,12 +58,10 @@ static void handle_packet(struct lcore_params *params, uint16_t port_id, uint16_
 	bool is_egress_sampled = pkt_meta == params->config->egress_sample_meta_indicator;
 	if (is_ingress_sampled || is_egress_sampled) {
 		if (params->config->show_sampled_packets) {
-			uint32_t spi = get_spi(packet);
-			DOCA_LOG_INFO("SAMPLED PACKET: port %d, queue_id %d, pkt_meta 0x%x, spi 0x%x %s",
+			DOCA_LOG_INFO("SAMPLED PACKET: port %d, queue_id %d, pkt_meta 0x%x, %s",
 				      port_id,
 				      queue_id,
 				      pkt_meta,
-				      spi,
 				      is_ingress_sampled ? "INGRESS" : "EGRESS");
 			rte_pktmbuf_dump(stdout, packet, packet->data_len);
 		}
@@ -73,15 +72,9 @@ static void handle_packet(struct lcore_params *params, uint16_t port_id, uint16_
 			rte_pktmbuf_dump(stdout, packet, packet->data_len);
 		}
 
-		// if it's an ARP packet
 		struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(packet, struct rte_ether_hdr *);
 		uint16_t ether_type = htons(eth_hdr->ether_type);
-
-		if (ether_type == RTE_ETHER_TYPE_ARP) {
-			DOCA_LOG_INFO("RSS: Received ARP packet on port %d, queue_id %d, pkt_meta 0x%x",
-				      port_id,
-				      queue_id,
-				      pkt_meta);
+		if (ether_type == DOCA_FLOW_ETHER_TYPE_ARP) {
 			handle_arp(params->config->dpdk_config.mbuf_pool, port_id, queue_id, packet, 0);
 		} else {
 			params->psp_svc->handle_miss_packet(packet);
@@ -150,15 +143,15 @@ bool reinject_packet(struct rte_mbuf *packet, uint16_t port_id)
 	for (uint16_t i = 0; i < max_tx_retries && nsent < 1; i++) {
 		nsent = rte_eth_tx_burst(port_id, queue_id, &packet, 1);
 	}
-	DOCA_LOG_INFO("Reinjected packet on port %d", port_id);
+	DOCA_LOG_DBG("Reinjected packet on port %d", port_id);
 	return nsent == 1;
 }
 
-int handle_arp(struct rte_mempool *mpool,
-	       uint16_t port_id,
-	       uint16_t queue_id,
-	       const struct rte_mbuf *request_pkt,
-	       uint32_t arp_response_meta_flag)
+uint16_t handle_arp(struct rte_mempool *mpool,
+		    uint16_t port_id,
+		    uint16_t queue_id,
+		    const struct rte_mbuf *request_pkt,
+		    uint32_t arp_response_meta_flag)
 {
 	const struct rte_ether_hdr *request_eth_hdr = rte_pktmbuf_mtod(request_pkt, struct rte_ether_hdr *);
 	const struct rte_arp_hdr *request_arp_hdr = (rte_arp_hdr *)&request_eth_hdr[1];
@@ -187,7 +180,7 @@ int handle_arp(struct rte_mempool *mpool,
 
 	rte_eth_macaddr_get(port_id, &response_eth_hdr->src_addr);
 	response_eth_hdr->dst_addr = request_eth_hdr->src_addr;
-	response_eth_hdr->ether_type = RTE_BE16(RTE_ETHER_TYPE_ARP);
+	response_eth_hdr->ether_type = RTE_BE16(DOCA_FLOW_ETHER_TYPE_ARP);
 
 	response_arp_hdr->arp_hardware = RTE_BE16(RTE_ARP_HRD_ETHER);
 	response_arp_hdr->arp_protocol = RTE_BE16(RTE_ETHER_TYPE_IPV4);
@@ -199,25 +192,18 @@ int handle_arp(struct rte_mempool *mpool,
 	response_arp_hdr->arp_data.arp_sip = request_arp_hdr->arp_data.arp_tip;
 	response_arp_hdr->arp_data.arp_tip = request_arp_hdr->arp_data.arp_sip;
 
-#if 0
-	DOCA_LOG_INFO("ARP Request:");
-    rte_pktmbuf_dump(stdout, request_pkt, request_pkt->data_len);
-    DOCA_LOG_INFO("ARP Response:");
-	rte_pktmbuf_dump(stdout, response_pkt, response_pkt->data_len);
-#endif
-
 	uint16_t nb_tx_packets = 0;
 	while (nb_tx_packets < 1) {
 		// This ARP reply will go to the empty pipe.
 		nb_tx_packets = rte_eth_tx_burst(port_id, queue_id, &response_pkt, 1);
 		if (nb_tx_packets != 1) {
-			DOCA_LOG_WARN("rte_eth_tx_burst returned %d", nb_tx_packets);
+			DOCA_LOG_WARN("ARP reinject: rte_eth_tx_burst returned %d", nb_tx_packets);
 		}
 	}
 
 	char ip_addr_str[INET_ADDRSTRLEN];
 	inet_ntop(AF_INET, &request_arp_hdr->arp_data.arp_tip, ip_addr_str, INET_ADDRSTRLEN);
-	DOCA_LOG_INFO("Handled ARP for IP %s", ip_addr_str);
+	DOCA_LOG_DBG("Port %d replied to ARP request for IP %s", port_id, ip_addr_str);
 
 	return 1;
 }

@@ -1,13 +1,25 @@
 /*
- * Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES, ALL RIGHTS RESERVED.
+ * Copyright (c) 2024 NVIDIA CORPORATION AND AFFILIATES.  All rights reserved.
  *
- * This software product is a proprietary product of NVIDIA CORPORATION &
- * AFFILIATES (the "Company") and all right, title, and interest in and to the
- * software product, including all associated intellectual property rights, are
- * and shall remain exclusively with the Company.
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright notice, this list of
+ *       conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright notice, this list of
+ *       conditions and the following disclaimer in the documentation and/or other materials
+ *       provided with the distribution.
+ *     * Neither the name of the NVIDIA CORPORATION nor the names of its contributors may be used
+ *       to endorse or promote products derived from this software without specific prior written
+ *       permission.
  *
- * This software product is governed by the End User License Agreement
- * provided with the software product.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TOR (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -39,7 +51,7 @@ struct psp_pf_dev {
 	rte_ether_addr src_mac;
 	std::string src_mac_str;
 
-	ipv6_addr_t src_pip; // Physical/Outer IP addr
+	struct doca_flow_ip_addr src_pip; // Physical/Outer IP addr
 	std::string src_pip_str;
 };
 
@@ -50,9 +62,9 @@ struct psp_pf_dev {
 struct psp_session_t {
 	rte_ether_addr dst_mac;
 
-	ipv6_addr_t dst_pip; //!< Physical/Outer IP addr
-	doca_be32_t dst_vip; //!< Virtual/Innter IP addr
-	doca_be32_t src_vip; //!< Virtual/Innter IP addr
+	struct doca_flow_ip_addr dst_pip; //!< Physical/Outer IP addr
+	doca_be32_t dst_vip;		  //!< Virtual/Innter IP addr
+	doca_be32_t src_vip;		  //!< Virtual/Innter IP addr
 
 	uint32_t spi_egress;  //!< Security Parameter Index on the wire - host-to-net
 	uint32_t spi_ingress; //!< Security Parameter Index on the wire - net-to-host
@@ -66,24 +78,6 @@ struct psp_session_t {
 	uint64_t pkt_count_egress;  //!< count of encap_encrypt_entry
 	uint64_t pkt_count_ingress; //!< count of acl_entry
 };
-
-/**
- * @brief packet header structure to simplify populating the encap_data array
- */
-struct eth_ipv6_psp_tunnel_hdr {
-	// encapped Ethernet header contents.
-	rte_ether_hdr eth;
-
-	// encapped IP header contents (extension header not supported)
-	rte_ipv6_hdr ip;
-
-	rte_udp_hdr udp;
-
-	// encapped PSP header contents.
-	rte_psp_base_hdr psp;
-	rte_be64_t psp_virt_cookie;
-
-} __rte_packed __rte_aligned(2);
 
 /**
  * @brief The entity which owns all the doca flow shared
@@ -150,14 +144,6 @@ public:
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
 	doca_error_t remove_encrypt_entry(psp_session_t *session);
-
-	/**
-	 * @brief Updates the indicated flow entry.
-	 *
-	 * @session [in]: The session whose associated flows should be updated
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t update_encrypt_entry(psp_session_t *session, const void *encrypt_key);
 
 	/**
 	 * @brief Shows flow counters for pipes which have a fixed number of entries,
@@ -253,12 +239,20 @@ private:
 				      doca_flow_pipe_entry **entry);
 
 	/**
-	 * Generates the outer/encap header contents for a given session
+	 * Generates the outer/encap header contents for a given session for ipv6 encap
 	 *
 	 * @session [in]: the remote host mac/ip/etc. to encap
 	 * @encap_data [out]: the actions.crypto_encap.encap_data to populate
 	 */
-	void format_encap_data(const psp_session_t *session, uint8_t *encap_data);
+	void format_encap_data_ipv6(const psp_session_t *session, uint8_t *encap_data);
+
+	/**
+	 * Generates the outer/encap header contents for a given session for ipv4 encap
+	 *
+	 * @session [in]: the remote host mac/ip/etc. to encap
+	 * @encap_data [out]: the actions.crypto_encap.encap_data to populate
+	 */
+	void format_encap_data_ipv4(const psp_session_t *session, uint8_t *encap_data);
 
 	/**
 	 * Top-level pipe creation method
@@ -290,14 +284,6 @@ private:
 	doca_error_t ingress_acl_pipe_create(void);
 
 	/**
-	 * Creates the pipe that maps the "sprayed" IP addresses
-	 * back to the expected IP address of the VF.
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t ingress_packet_spray_pipe_create(void);
-
-	/**
 	 * Creates the pipe which counts the various syndrome types
 	 * and drops the packets
 	 *
@@ -311,14 +297,6 @@ private:
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
 	doca_error_t egress_acl_pipe_create(void);
-
-	/**
-	 * Creates the pipe to "spray" traffic to different SPIs by
-	 * re-writing the IP address to one of the configured destinations.
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t egress_packet_spray_pipe_create(void);
 
 	/**
 	 * Creates the pipe to mark and randomly sample outgoing packets
@@ -344,7 +322,8 @@ private:
 
 	/**
 	 * @brief Creates a pipe whose only purpose is to relay
-	 * flows from the egress domain to the secure-egress domain.
+	 * flows from the egress domain to the secure-egress domain,
+	 * and to relay injected ARP responses back to the VF.
 	 *
 	 * @next_pipe [in]: The pipe to which the empty pipe
 	 * should forward its traffic.
@@ -391,10 +370,8 @@ private:
 	doca_flow_pipe *ingress_decrypt_pipe{};
 	doca_flow_pipe *ingress_sampling_pipe{};
 	doca_flow_pipe *ingress_acl_pipe{};
-	doca_flow_pipe *ingress_packet_spray_pipe{};
 
 	// host-to-net pipes
-	doca_flow_pipe *egress_packet_spray_pipe{};
 	doca_flow_pipe *egress_acl_pipe{};
 	doca_flow_pipe *egress_sampling_pipe{};
 	doca_flow_pipe *egress_encrypt_pipe{};
@@ -407,14 +384,14 @@ private:
 	doca_flow_pipe_entry *default_decrypt_entry{};
 	doca_flow_pipe_entry *default_ingr_sampling_entry{};
 	doca_flow_pipe_entry *default_ingr_acl_entry{};
-	doca_flow_pipe_entry *default_ingr_packet_spray_entry{};
 	doca_flow_pipe_entry *default_egr_sampling_entry{};
-	doca_flow_pipe_entry *root_jump_to_ingress_entry{};
+	doca_flow_pipe_entry *root_jump_to_ingress_ipv6_entry{};
+	doca_flow_pipe_entry *root_jump_to_ingress_ipv4_entry{};
 	doca_flow_pipe_entry *root_jump_to_egress_entry{};
 	doca_flow_pipe_entry *vf_arp_to_rss{};
 	doca_flow_pipe_entry *syndrome_stats_entries[NUM_OF_PSP_SYNDROMES]{};
-	doca_flow_pipe_entry *empty_pipe_arp_entry{};
-	std::vector<doca_flow_pipe_entry *> egr_packet_spray_entries{};
+	doca_flow_pipe_entry *empty_pipe_entry{};
+	doca_flow_pipe_entry *root_default_drop{};
 
 	// commonly used setting to enable per-entry counters
 	struct doca_flow_monitor monitor_count {};

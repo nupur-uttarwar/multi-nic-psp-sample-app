@@ -1,13 +1,25 @@
 /*
- * Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES, ALL RIGHTS RESERVED.
+ * Copyright (c) 2024 NVIDIA CORPORATION AND AFFILIATES.  All rights reserved.
  *
- * This software product is a proprietary product of NVIDIA CORPORATION &
- * AFFILIATES (the "Company") and all right, title, and interest in and to the
- * software product, including all associated intellectual property rights, are
- * and shall remain exclusively with the Company.
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright notice, this list of
+ *       conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright notice, this list of
+ *       conditions and the following disclaimer in the documentation and/or other materials
+ *       provided with the distribution.
+ *     * Neither the name of the NVIDIA CORPORATION nor the names of its contributors may be used
+ *       to endorse or promote products derived from this software without specific prior written
+ *       permission.
  *
- * This software product is governed by the End User License Agreement
- * provided with the software product.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TOR (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -49,6 +61,42 @@ struct entries_status {
 	int nb_processed;     /* number of entries that was already processed */
 	int entries_in_queue; /* number of entries in queue that is waiting to process */
 };
+
+/**
+ * @brief packet header structure to simplify populating the encap_data array for encap ipv6 data
+ */
+struct eth_ipv6_psp_tunnel_hdr {
+	// encapped Ethernet header contents.
+	rte_ether_hdr eth;
+
+	// encapped IP header contents (extension header not supported)
+	rte_ipv6_hdr ip;
+
+	rte_udp_hdr udp;
+
+	// encapped PSP header contents.
+	rte_psp_base_hdr psp;
+	rte_be64_t psp_virt_cookie;
+
+} __rte_packed __rte_aligned(2);
+
+/**
+ * @brief packet header structure to simplify populating the encap_data array for encap ipv4 data
+ */
+struct eth_ipv4_psp_tunnel_hdr {
+	// encapped Ethernet header contents.
+	rte_ether_hdr eth;
+
+	// encapped IP header contents (extension header not supported)
+	rte_ipv4_hdr ip;
+
+	rte_udp_hdr udp;
+
+	// encapped PSP header contents.
+	rte_psp_base_hdr psp;
+	rte_be64_t psp_virt_cookie;
+
+} __rte_packed __rte_aligned(2);
 
 const uint8_t PSP_SAMPLE_ENABLE = 1 << 7;
 
@@ -101,7 +149,8 @@ doca_error_t PSP_GatewayFlows::configure_mirrors(void)
 	res_cfg.mirror_cfg.nr_targets = 1;
 	res_cfg.mirror_cfg.target = &mirr_tgt;
 
-	IF_SUCCESS(result, doca_flow_shared_resource_cfg(DOCA_FLOW_SHARED_RESOURCE_MIRROR, mirror_res_id, &res_cfg));
+	IF_SUCCESS(result,
+		   doca_flow_shared_resource_set_cfg(DOCA_FLOW_SHARED_RESOURCE_MIRROR, mirror_res_id, &res_cfg));
 
 	IF_SUCCESS(
 		result,
@@ -114,7 +163,7 @@ doca_error_t PSP_GatewayFlows::configure_mirrors(void)
 	res_cfg.mirror_cfg.target = &mirr_tgt_port;
 
 	IF_SUCCESS(result,
-		   doca_flow_shared_resource_cfg(DOCA_FLOW_SHARED_RESOURCE_MIRROR, mirror_res_id_port, &res_cfg));
+		   doca_flow_shared_resource_set_cfg(DOCA_FLOW_SHARED_RESOURCE_MIRROR, mirror_res_id_port, &res_cfg));
 	IF_SUCCESS(result,
 		   doca_flow_shared_resources_bind(DOCA_FLOW_SHARED_RESOURCE_MIRROR,
 						   &mirror_res_id_port,
@@ -207,11 +256,6 @@ doca_error_t PSP_GatewayFlows::create_pipes(void)
 	doca_error_t result = DOCA_SUCCESS;
 
 	IF_SUCCESS(result, syndrome_stats_pipe_create());
-
-	if (app_config->enable_packet_spray) {
-		IF_SUCCESS(result, ingress_packet_spray_pipe_create());
-	}
-
 	IF_SUCCESS(result, ingress_acl_pipe_create());
 
 	if (sampling_enabled) {
@@ -225,12 +269,7 @@ doca_error_t PSP_GatewayFlows::create_pipes(void)
 		IF_SUCCESS(result, egress_sampling_pipe_create());
 	}
 	IF_SUCCESS(result, egress_acl_pipe_create());
-
-	if (app_config->enable_packet_spray) {
-		IF_SUCCESS(result, egress_packet_spray_pipe_create());
-	} else {
-		IF_SUCCESS(result, empty_pipe_create(egress_acl_pipe));
-	}
+	IF_SUCCESS(result, empty_pipe_create(egress_acl_pipe));
 
 	IF_SUCCESS(result, ingress_root_pipe_create());
 
@@ -279,7 +318,6 @@ doca_error_t PSP_GatewayFlows::ingress_decrypt_pipe_create(void)
 
 	doca_flow_match match = {};
 	match.parser_meta.port_meta = UINT32_MAX;
-	match.parser_meta.outer_l3_type = DOCA_FLOW_L3_META_IPV6;
 	match.parser_meta.outer_l4_type = DOCA_FLOW_L4_META_UDP;
 	match.outer.l4_type_ext = DOCA_FLOW_L4_TYPE_EXT_UDP;
 	match.outer.udp.l4_port.dst_port = RTE_BE16(DOCA_FLOW_PSP_DEFAULT_PORT);
@@ -389,59 +427,6 @@ doca_error_t PSP_GatewayFlows::ingress_sampling_pipe_create(void)
 	return result;
 }
 
-doca_error_t PSP_GatewayFlows::ingress_packet_spray_pipe_create(void)
-{
-	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
-	assert(app_config->enable_packet_spray);
-	assert(app_config->local_vf_addr.length());
-	doca_error_t result = DOCA_SUCCESS;
-
-	rte_be32_t local_vf_addr;
-	if (inet_pton(AF_INET, app_config->local_vf_addr.c_str(), &local_vf_addr) != 1) {
-		DOCA_LOG_ERR("Invalid local_vf_addr: %s", app_config->local_vf_addr.c_str());
-		return DOCA_ERROR_INVALID_VALUE;
-	}
-
-	doca_flow_match match = {};
-
-	doca_flow_actions actions = {};
-	actions.outer.l3_type = DOCA_FLOW_L3_TYPE_IP4;
-	actions.outer.ip4.dst_ip = UINT32_MAX;
-
-	doca_flow_actions *actions_arr[] = {&actions};
-
-	doca_flow_fwd fwd = {};
-	fwd.type = DOCA_FLOW_FWD_PORT;
-	fwd.port_id = vf_port_id;
-
-	doca_flow_pipe_cfg *pipe_cfg;
-	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev->port_obj));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_name(pipe_cfg, "INGR_SPRAY"));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, 1));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_dir_info(pipe_cfg, DOCA_FLOW_DIRECTION_NETWORK_TO_HOST));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &match, nullptr));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_actions(pipe_cfg, actions_arr, nullptr, nullptr, 1));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_monitor(pipe_cfg, &monitor_count));
-	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd, nullptr, &ingress_packet_spray_pipe));
-
-	if (pipe_cfg) {
-		doca_flow_pipe_cfg_destroy(pipe_cfg);
-	}
-
-	actions.outer.ip4.dst_ip = local_vf_addr;
-	IF_SUCCESS(result,
-		   add_single_entry(0,
-				    ingress_packet_spray_pipe,
-				    pf_dev->port_obj,
-				    nullptr,
-				    &actions,
-				    nullptr,
-				    nullptr,
-				    &default_ingr_packet_spray_entry));
-
-	return result;
-}
-
 doca_error_t PSP_GatewayFlows::ingress_acl_pipe_create(void)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
@@ -470,13 +455,8 @@ doca_error_t PSP_GatewayFlows::ingress_acl_pipe_create(void)
 	doca_flow_actions *actions_arr[] = {&actions};
 
 	doca_flow_fwd fwd = {};
-	if (app_config->enable_packet_spray) {
-		fwd.type = DOCA_FLOW_FWD_PIPE;
-		fwd.next_pipe = ingress_packet_spray_pipe;
-	} else {
-		fwd.type = DOCA_FLOW_FWD_PORT;
-		fwd.port_id = vf_port_id;
-	}
+	fwd.type = DOCA_FLOW_FWD_PORT;
+	fwd.port_id = vf_port_id;
 
 	doca_flow_fwd fwd_miss = {};
 	fwd_miss.type = DOCA_FLOW_FWD_PIPE;
@@ -587,85 +567,6 @@ doca_error_t PSP_GatewayFlows::syndrome_stats_pipe_create(void)
 	return result;
 }
 
-doca_error_t PSP_GatewayFlows::egress_packet_spray_pipe_create(void)
-{
-	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
-	assert(app_config->enable_packet_spray);
-	assert(egress_acl_pipe);
-	assert(!app_config->net_config.hosts.empty());
-	doca_error_t result = DOCA_SUCCESS;
-
-	doca_flow_match match = {};
-	match.outer.l4_type_ext = DOCA_FLOW_L4_TYPE_EXT_UDP;
-	match.outer.udp.l4_port.src_port = UINT16_MAX;
-
-	doca_flow_actions actions = {};
-	actions.outer.l3_type = DOCA_FLOW_L3_TYPE_IP4;
-	actions.outer.ip4.dst_ip = UINT32_MAX;
-
-	doca_flow_actions *actions_arr[] = {&actions};
-
-	doca_flow_fwd fwd = {};
-	fwd.type = DOCA_FLOW_FWD_PIPE;
-	fwd.next_pipe = egress_acl_pipe;
-
-	doca_flow_pipe_cfg *pipe_cfg;
-	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev->port_obj));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_name(pipe_cfg, "EGR_SPRAY"));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_domain(pipe_cfg, DOCA_FLOW_PIPE_DOMAIN_EGRESS));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_type(pipe_cfg, DOCA_FLOW_PIPE_HASH));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, app_config->max_tunnels));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_dir_info(pipe_cfg, DOCA_FLOW_DIRECTION_HOST_TO_NETWORK));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &match, &match));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_actions(pipe_cfg, actions_arr, nullptr, nullptr, 1));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_monitor(pipe_cfg, &monitor_count));
-	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd, nullptr, &egress_packet_spray_pipe));
-
-	if (pipe_cfg) {
-		doca_flow_pipe_cfg_destroy(pipe_cfg);
-	}
-
-	for (size_t i = 0; i < app_config->max_tunnels && result == DOCA_SUCCESS; i++) {
-		size_t host_idx = i % app_config->net_config.hosts.size();
-		const auto &host = app_config->net_config.hosts[host_idx];
-		actions.outer.ip4.dst_ip = host.vip;
-
-		doca_flow_pipe_entry *entry;
-
-		int num_of_entries = 1;
-		doca_flow_flags_type flags = DOCA_FLOW_NO_WAIT;
-
-		entries_status status = {};
-		status.entries_in_queue = num_of_entries;
-
-		std::string dst_ip = ipv4_to_string(actions.outer.ip4.dst_ip);
-		DOCA_LOG_DBG("Egress hash 0x%x -> %s", (uint32_t)i, dst_ip.c_str());
-		IF_SUCCESS(result,
-			   doca_flow_pipe_hash_add_entry(0,
-							 egress_packet_spray_pipe,
-							 i,
-							 &actions,
-							 &monitor_count,
-							 nullptr,
-							 flags,
-							 &status,
-							 &entry));
-
-		IF_SUCCESS(result, doca_flow_entries_process(pf_dev->port_obj, 0, DEFAULT_TIMEOUT_US, num_of_entries));
-
-		egr_packet_spray_entries.push_back(entry);
-
-		if (status.nb_processed != num_of_entries || status.failure) {
-			DOCA_LOG_ERR("Failed to process entry; nb_processed = %d, failure = %d",
-				     status.nb_processed,
-				     status.failure);
-			result = DOCA_ERROR_BAD_STATE;
-		}
-	}
-
-	return result;
-}
-
 doca_error_t PSP_GatewayFlows::egress_acl_pipe_create(void)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
@@ -679,22 +580,31 @@ doca_error_t PSP_GatewayFlows::egress_acl_pipe_create(void)
 	match.outer.ip4.dst_ip = UINT32_MAX;
 
 	doca_flow_actions actions = {};
+	doca_flow_actions encap_ipv4 = {};
+	doca_flow_actions encap_ipv6 = {};
+
 	actions.has_crypto_encap = true;
 	actions.crypto_encap.action_type = DOCA_FLOW_CRYPTO_REFORMAT_ENCAP;
 	actions.crypto_encap.net_type = DOCA_FLOW_CRYPTO_HEADER_PSP_TUNNEL;
 	actions.crypto_encap.icv_size = PSP_ICV_SIZE;
-	actions.crypto_encap.data_size = sizeof(eth_ipv6_psp_tunnel_hdr);
-
-	if (!app_config->net_config.vc_enabled) {
-		actions.crypto_encap.data_size -= sizeof(uint64_t);
-	}
-	memset(actions.crypto_encap.encap_data, 0xff, actions.crypto_encap.data_size);
-
 	actions.crypto.action_type = DOCA_FLOW_CRYPTO_ACTION_ENCRYPT;
 	actions.crypto.resource_type = DOCA_FLOW_CRYPTO_RESOURCE_PSP;
 	actions.crypto.crypto_id = UINT32_MAX; // per entry
 
-	doca_flow_actions *actions_arr[] = {&actions};
+	encap_ipv6 = actions;
+	encap_ipv4 = actions;
+
+	encap_ipv6.crypto_encap.data_size = sizeof(eth_ipv6_psp_tunnel_hdr);
+	encap_ipv4.crypto_encap.data_size = sizeof(eth_ipv4_psp_tunnel_hdr);
+
+	if (!app_config->net_config.vc_enabled) {
+		encap_ipv6.crypto_encap.data_size -= sizeof(uint64_t);
+		encap_ipv4.crypto_encap.data_size -= sizeof(uint64_t);
+	}
+	memset(encap_ipv6.crypto_encap.encap_data, 0xff, encap_ipv6.crypto_encap.data_size);
+	memset(encap_ipv4.crypto_encap.encap_data, 0xff, encap_ipv4.crypto_encap.data_size);
+
+	doca_flow_actions *actions_arr[] = {&encap_ipv6, &encap_ipv4};
 
 	doca_flow_fwd fwd_to_sampling = {};
 	fwd_to_sampling.type = DOCA_FLOW_FWD_PIPE;
@@ -718,7 +628,7 @@ doca_error_t PSP_GatewayFlows::egress_acl_pipe_create(void)
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_dir_info(pipe_cfg, DOCA_FLOW_DIRECTION_HOST_TO_NETWORK));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_miss_counter(pipe_cfg, true));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &match, nullptr));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_actions(pipe_cfg, actions_arr, nullptr, nullptr, 1));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_actions(pipe_cfg, actions_arr, nullptr, nullptr, 2));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_monitor(pipe_cfg, &monitor_count));
 	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, p_fwd, &fwd_miss, &egress_acl_pipe));
 
@@ -733,14 +643,14 @@ doca_error_t PSP_GatewayFlows::add_encrypt_entry(psp_session_t *session, const v
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
 	doca_error_t result = DOCA_SUCCESS;
-	std::string dst_pip = ipv6_to_string(session->dst_pip);
+	std::string dst_pip = ipv6_to_string(session->dst_pip.ipv6_addr);
 	std::string dst_vip = ipv4_to_string(session->dst_vip);
 
-	DOCA_LOG_INFO("Creating encrypt flow entry: dst_pip %s, dst_vip %s, SPI 0x%x, crypto_id %d",
-		      dst_pip.c_str(),
-		      dst_vip.c_str(),
-		      session->spi_egress,
-		      session->crypto_id);
+	DOCA_LOG_DBG("Creating encrypt flow entry: dst_pip %s, dst_vip %s, SPI %d, crypto_id %d",
+		     dst_pip.c_str(),
+		     dst_vip.c_str(),
+		     session->spi_egress,
+		     session->crypto_id);
 
 	struct doca_flow_shared_resource_cfg res_cfg = {};
 	res_cfg.domain = DOCA_FLOW_PIPE_DOMAIN_SECURE_EGRESS;
@@ -748,7 +658,7 @@ doca_error_t PSP_GatewayFlows::add_encrypt_entry(psp_session_t *session, const v
 									 DOCA_FLOW_CRYPTO_KEY_256;
 	res_cfg.psp_cfg.key_cfg.key = (uint32_t *)encrypt_key;
 
-	result = doca_flow_shared_resource_cfg(DOCA_FLOW_SHARED_RESOURCE_PSP, session->crypto_id, &res_cfg);
+	result = doca_flow_shared_resource_set_cfg(DOCA_FLOW_SHARED_RESOURCE_PSP, session->crypto_id, &res_cfg);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to configure crypto_id %d: %s", session->crypto_id, doca_error_get_descr(result));
 		return result;
@@ -764,12 +674,21 @@ doca_error_t PSP_GatewayFlows::add_encrypt_entry(psp_session_t *session, const v
 	encap_actions.crypto_encap.action_type = DOCA_FLOW_CRYPTO_REFORMAT_ENCAP;
 	encap_actions.crypto_encap.net_type = DOCA_FLOW_CRYPTO_HEADER_PSP_TUNNEL;
 	encap_actions.crypto_encap.icv_size = PSP_ICV_SIZE;
-	encap_actions.crypto_encap.data_size = sizeof(eth_ipv6_psp_tunnel_hdr);
+	if (session->dst_pip.type == DOCA_FLOW_L3_TYPE_IP6) {
+		encap_actions.crypto_encap.data_size = sizeof(eth_ipv6_psp_tunnel_hdr);
+		encap_actions.action_idx = 0;
+	} else {
+		encap_actions.crypto_encap.data_size = sizeof(eth_ipv4_psp_tunnel_hdr);
+		encap_actions.action_idx = 1;
+	}
 
 	if (!app_config->net_config.vc_enabled) {
 		encap_actions.crypto_encap.data_size -= sizeof(uint64_t);
 	}
-	format_encap_data(session, encap_actions.crypto_encap.encap_data);
+	if (session->dst_pip.type == DOCA_FLOW_L3_TYPE_IP6)
+		format_encap_data_ipv6(session, encap_actions.crypto_encap.encap_data);
+	else
+		format_encap_data_ipv4(session, encap_actions.crypto_encap.encap_data);
 
 	encap_actions.crypto.action_type = DOCA_FLOW_CRYPTO_ACTION_ENCRYPT;
 	encap_actions.crypto.resource_type = DOCA_FLOW_CRYPTO_RESOURCE_PSP;
@@ -796,12 +715,12 @@ doca_error_t PSP_GatewayFlows::add_encrypt_entry(psp_session_t *session, const v
 	return result;
 }
 
-void PSP_GatewayFlows::format_encap_data(const psp_session_t *session, uint8_t *encap_data)
+void PSP_GatewayFlows::format_encap_data_ipv6(const psp_session_t *session, uint8_t *encap_data)
 {
 	static const doca_be32_t DEFAULT_VTC_FLOW = 0x6 << 28;
 
 	auto *encap_hdr = (eth_ipv6_psp_tunnel_hdr *)encap_data;
-	encap_hdr->eth.ether_type = RTE_BE16(DOCA_FLOW_ETHER_TYPE_IPV6);
+	encap_hdr->eth.ether_type = RTE_BE16(RTE_ETHER_TYPE_IPV6);
 	encap_hdr->ip.vtc_flow = RTE_BE32(DEFAULT_VTC_FLOW);
 	encap_hdr->ip.proto = IPPROTO_UDP;
 	encap_hdr->ip.hop_limits = 50;
@@ -814,10 +733,38 @@ void PSP_GatewayFlows::format_encap_data(const psp_session_t *session, uint8_t *
 	encap_hdr->psp_virt_cookie = RTE_BE64(session->vc);
 
 	const auto &dmac = app_config->nexthop_enable ? app_config->nexthop_dmac : session->dst_mac;
-	memcpy(encap_hdr->eth.src_addr.addr_bytes, pf_dev->src_mac.addr_bytes, DOCA_FLOW_ETHER_ADDR_LEN);
-	memcpy(encap_hdr->eth.dst_addr.addr_bytes, dmac.addr_bytes, DOCA_FLOW_ETHER_ADDR_LEN);
-	memcpy(encap_hdr->ip.src_addr, pf_dev->src_pip, IPV6_ADDR_LEN);
-	memcpy(encap_hdr->ip.dst_addr, session->dst_pip, IPV6_ADDR_LEN);
+	memcpy(encap_hdr->eth.src_addr.addr_bytes, pf_dev->src_mac.addr_bytes, RTE_ETHER_ADDR_LEN);
+	memcpy(encap_hdr->eth.dst_addr.addr_bytes, dmac.addr_bytes, RTE_ETHER_ADDR_LEN);
+	memcpy(encap_hdr->ip.src_addr, pf_dev->src_pip.ipv6_addr, IPV6_ADDR_LEN);
+	memcpy(encap_hdr->ip.dst_addr, session->dst_pip.ipv6_addr, IPV6_ADDR_LEN);
+
+	encap_hdr->psp.rsrv1 = 1; // always 1
+	encap_hdr->psp.ver = session->psp_proto_ver;
+	encap_hdr->psp.v = !!app_config->net_config.vc_enabled;
+	// encap_hdr->psp.s will be set by the egress_sampling pipe
+}
+
+void PSP_GatewayFlows::format_encap_data_ipv4(const psp_session_t *session, uint8_t *encap_data)
+{
+	auto *encap_hdr = (eth_ipv4_psp_tunnel_hdr *)encap_data;
+
+	encap_hdr->eth.ether_type = RTE_BE16(RTE_ETHER_TYPE_IPV4);
+	encap_hdr->udp.src_port = 0x0; // computed
+	encap_hdr->udp.dst_port = RTE_BE16(DOCA_FLOW_PSP_DEFAULT_PORT);
+	encap_hdr->psp.nexthdr = 4;
+	encap_hdr->psp.hdrextlen = (uint8_t)(app_config->net_config.vc_enabled ? 2 : 1);
+	encap_hdr->psp.res_cryptofst = (uint8_t)app_config->net_config.crypt_offset;
+	encap_hdr->psp.spi = RTE_BE32(session->spi_egress);
+	encap_hdr->psp_virt_cookie = RTE_BE64(session->vc);
+
+	const auto &dmac = app_config->nexthop_enable ? app_config->nexthop_dmac : session->dst_mac;
+	memcpy(encap_hdr->eth.src_addr.addr_bytes, pf_dev->src_mac.addr_bytes, RTE_ETHER_ADDR_LEN);
+	memcpy(encap_hdr->eth.dst_addr.addr_bytes, dmac.addr_bytes, RTE_ETHER_ADDR_LEN);
+	encap_hdr->ip.src_addr = pf_dev->src_pip.ipv4_addr;
+	encap_hdr->ip.dst_addr = session->dst_pip.ipv4_addr;
+	encap_hdr->ip.version_ihl = 0x45;
+	encap_hdr->ip.next_proto_id = IPPROTO_UDP;
+
 	encap_hdr->psp.rsrv1 = 1; // always 1
 	encap_hdr->psp.ver = session->psp_proto_ver;
 	encap_hdr->psp.v = !!app_config->net_config.vc_enabled;
@@ -832,74 +779,12 @@ doca_error_t PSP_GatewayFlows::remove_encrypt_entry(psp_session_t *session)
 	uint32_t flags = DOCA_FLOW_NO_WAIT;
 	uint32_t num_of_entries = 1;
 
-	result = doca_flow_pipe_rm_entry(pipe_queue, flags, session->encap_encrypt_entry);
+	result = doca_flow_pipe_remove_entry(pipe_queue, flags, session->encap_encrypt_entry);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_INFO("Error removing PSP encap entry: %s", doca_error_get_descr(result));
 	}
 
 	result = doca_flow_entries_process(pf_dev->port_obj, 0, DEFAULT_TIMEOUT_US, num_of_entries);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to process entry: %s", doca_error_get_descr(result));
-		return result;
-	}
-
-	return result;
-}
-
-doca_error_t PSP_GatewayFlows::update_encrypt_entry(psp_session_t *session, const void *encrypt_key) {
-	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
-	doca_error_t result = DOCA_SUCCESS;
-	std::string dst_pip = ipv6_to_string(session->dst_pip);
-	std::string dst_vip = ipv4_to_string(session->dst_vip);
-
-	DOCA_LOG_INFO("Updating encrypt flow entry: dst_pip %s, dst_vip %s, SPI 0x%x, crypto_id %d",
-		      dst_pip.c_str(),
-		      dst_vip.c_str(),
-		      session->spi_egress,
-		      session->crypto_id);
-
-	struct doca_flow_shared_resource_cfg res_cfg = {};
-	res_cfg.domain = DOCA_FLOW_PIPE_DOMAIN_SECURE_EGRESS;
-	res_cfg.psp_cfg.key_cfg.key_type = session->psp_proto_ver == 0 ? DOCA_FLOW_CRYPTO_KEY_128 :
-									 DOCA_FLOW_CRYPTO_KEY_256;
-	res_cfg.psp_cfg.key_cfg.key = (uint32_t *)encrypt_key;
-
-	result = doca_flow_shared_resource_cfg(DOCA_FLOW_SHARED_RESOURCE_PSP, session->crypto_id, &res_cfg);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to configure crypto_id %d: %s", session->crypto_id, doca_error_get_descr(result));
-		return result;
-	}
-
-	doca_flow_actions encap_actions = {};
-	encap_actions.has_crypto_encap = true;
-	encap_actions.crypto_encap.action_type = DOCA_FLOW_CRYPTO_REFORMAT_ENCAP;
-	encap_actions.crypto_encap.net_type = DOCA_FLOW_CRYPTO_HEADER_PSP_TUNNEL;
-	encap_actions.crypto_encap.icv_size = PSP_ICV_SIZE;
-	encap_actions.crypto_encap.data_size = sizeof(eth_ipv6_psp_tunnel_hdr);
-
-	if (!app_config->net_config.vc_enabled) {
-		encap_actions.crypto_encap.data_size -= sizeof(uint64_t);
-	}
-	format_encap_data(session, encap_actions.crypto_encap.encap_data);
-
-	encap_actions.crypto.action_type = DOCA_FLOW_CRYPTO_ACTION_ENCRYPT;
-	encap_actions.crypto.resource_type = DOCA_FLOW_CRYPTO_RESOURCE_PSP;
-	encap_actions.crypto.crypto_id = session->crypto_id;
-
-	result = doca_flow_pipe_update_entry(
-		0, // pipe_queue
-		egress_acl_pipe,
-		&encap_actions,
-		nullptr, // monitor
-		nullptr, // fwd
-		DOCA_FLOW_NO_WAIT, // flags
-		session->encap_encrypt_entry);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to update encrypt_encap pipe entry: %s", doca_error_get_descr(result));
-		return result;
-	}
-
-	result = doca_flow_entries_process(pf_dev->port_obj, 0, DEFAULT_TIMEOUT_US, 1 /* num entries */);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to process entry: %s", doca_error_get_descr(result));
 		return result;
@@ -979,12 +864,13 @@ doca_error_t PSP_GatewayFlows::egress_sampling_pipe_create(void)
 doca_error_t PSP_GatewayFlows::empty_pipe_create(doca_flow_pipe *next_pipe)
 {
 	doca_error_t result = DOCA_SUCCESS;
-	doca_flow_match match_arp_mask = {};
-	match_arp_mask.outer.eth.type = UINT16_MAX;
+
+	doca_flow_match match_arp = {};
+	match_arp.outer.eth.type = RTE_BE16(DOCA_FLOW_ETHER_TYPE_ARP);
 
 	doca_flow_fwd fwd = {};
 	fwd.type = DOCA_FLOW_FWD_PORT;
-	fwd.port_id = UINT16_MAX;
+	fwd.port_id = vf_port_id;
 
 	doca_flow_fwd fwd_miss = {};
 	fwd_miss.type = DOCA_FLOW_FWD_PIPE;
@@ -996,17 +882,14 @@ doca_error_t PSP_GatewayFlows::empty_pipe_create(doca_flow_pipe *next_pipe)
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_domain(pipe_cfg, DOCA_FLOW_PIPE_DOMAIN_EGRESS));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_is_root(pipe_cfg, true));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, 1));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &match_arp_mask, nullptr));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &match_arp, nullptr));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_monitor(pipe_cfg, &monitor_count));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_miss_counter(pipe_cfg, true));
 	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd, &fwd_miss, &empty_pipe));
 
-	// ARP should be forwarded directly to the VF.
-	doca_flow_match match_arp = {};
-	match_arp.outer.eth.type = RTE_BE16(RTE_ETHER_TYPE_ARP);
-	fwd.port_id = vf_port_id;
 	IF_SUCCESS(
 		result,
-		add_single_entry(0, empty_pipe, pf_dev->port_obj, &match_arp, nullptr, nullptr, &fwd, &empty_pipe_arp_entry));
+		add_single_entry(0, empty_pipe, pf_dev->port_obj, nullptr, nullptr, nullptr, nullptr, &empty_pipe_entry));
 
 	if (pipe_cfg) {
 		doca_flow_pipe_cfg_destroy(pipe_cfg);
@@ -1041,7 +924,7 @@ doca_error_t PSP_GatewayFlows::empty_pipe_create_not_sampled(void)
 				    nullptr,
 				    nullptr,
 				    nullptr,
-				    &empty_pipe_arp_entry));
+				    &empty_pipe_entry));
 
 	if (pipe_cfg) {
 		doca_flow_pipe_cfg_destroy(pipe_cfg);
@@ -1062,7 +945,7 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_name(pipe_cfg, "ROOT"));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_type(pipe_cfg, DOCA_FLOW_PIPE_CONTROL));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_is_root(pipe_cfg, true));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, 3));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, 5));
 	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, nullptr, nullptr, &ingress_root_pipe));
 
 	if (pipe_cfg) {
@@ -1083,6 +966,12 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 	ipv6_from_uplink.parser_meta.outer_ip4_checksum_ok = false;
 	ipv6_from_uplink.outer.eth.type = RTE_BE16(RTE_ETHER_TYPE_IPV6);
 
+	doca_flow_match ipv4_from_uplink = {};
+	ipv4_from_uplink.parser_meta.port_meta = pf_dev->port_id;
+	ipv4_from_uplink.parser_meta.outer_l3_ok = true;
+	ipv4_from_uplink.parser_meta.outer_ip4_checksum_ok = true;
+	ipv4_from_uplink.outer.eth.type = RTE_BE16(RTE_ETHER_TYPE_IPV4);
+
 	doca_flow_match ipv4_from_vf = {};
 	ipv4_from_vf.parser_meta.port_meta = vf_port_id;
 	ipv4_from_vf.parser_meta.outer_l3_ok = true;
@@ -1095,7 +984,9 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 
 	doca_flow_match arp_from_vf = {};
 	arp_from_vf.parser_meta.port_meta = vf_port_id;
-	arp_from_vf.outer.eth.type = RTE_BE16(RTE_ETHER_TYPE_ARP);
+	arp_from_vf.outer.eth.type = RTE_BE16(DOCA_FLOW_ETHER_TYPE_ARP);
+
+	doca_flow_match empty_match = {};
 
 	doca_flow_fwd fwd_ingress = {};
 	fwd_ingress.type = DOCA_FLOW_FWD_PIPE;
@@ -1103,12 +994,14 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 
 	doca_flow_fwd fwd_egress = {};
 	fwd_egress.type = DOCA_FLOW_FWD_PIPE;
-	fwd_egress.next_pipe = app_config->enable_packet_spray ? egress_packet_spray_pipe :
-								 empty_pipe; // and then to egress_acl_pipe
+	fwd_egress.next_pipe = empty_pipe; // and then to egress_acl_pipe
 
 	doca_flow_fwd fwd_rss = {};
 	fwd_rss.type = DOCA_FLOW_FWD_PIPE;
 	fwd_rss.next_pipe = rss_pipe;
+
+	doca_flow_fwd fwd_miss = {};
+	fwd_miss.type = DOCA_FLOW_FWD_DROP;
 
 	uint16_t pipe_queue = 0;
 
@@ -1125,7 +1018,22 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 						    &monitor_count,
 						    &fwd_ingress,
 						    nullptr,
-						    &root_jump_to_ingress_entry));
+						    &root_jump_to_ingress_ipv6_entry));
+
+	IF_SUCCESS(result,
+		   doca_flow_pipe_control_add_entry(pipe_queue,
+						    1,
+						    ingress_root_pipe,
+						    &ipv4_from_uplink,
+						    &mask,
+						    nullptr,
+						    nullptr,
+						    nullptr,
+						    nullptr,
+						    &monitor_count,
+						    &fwd_ingress,
+						    nullptr,
+						    &root_jump_to_ingress_ipv4_entry));
 
 	IF_SUCCESS(result,
 		   doca_flow_pipe_control_add_entry(pipe_queue,
@@ -1156,6 +1064,21 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 						    &fwd_rss,
 						    nullptr,
 						    &vf_arp_to_rss));
+	/* default miss in switch mode goes to NIC domain. this entry ensures to drop a non-matched packet */
+	IF_SUCCESS(result,
+		   doca_flow_pipe_control_add_entry(pipe_queue,
+						    4,
+						    ingress_root_pipe,
+						    &empty_match,
+						    &empty_match,
+						    nullptr,
+						    nullptr,
+						    nullptr,
+						    nullptr,
+						    &monitor_count,
+						    &fwd_miss,
+						    nullptr,
+						    &root_default_drop));
 
 	return result;
 }
@@ -1242,17 +1165,17 @@ std::pair<uint64_t, uint64_t> PSP_GatewayFlows::perform_pipe_query(pipe_query *q
 	uint64_t new_misses = 0;
 
 	if (query->entry) {
-		doca_flow_query stats = {};
-		doca_error_t result = doca_flow_query_entry(query->entry, &stats);
+		doca_flow_resource_query stats = {};
+		doca_error_t result = doca_flow_resource_query_entry(query->entry, &stats);
 		if (result == DOCA_SUCCESS) {
-			new_hits = stats.total_pkts;
+			new_hits = stats.counter.total_pkts;
 		}
 	}
 	if (query->pipe) {
-		doca_flow_query stats = {};
-		doca_error_t result = doca_flow_query_pipe_miss(query->pipe, &stats);
+		doca_flow_resource_query stats = {};
+		doca_error_t result = doca_flow_resource_query_pipe_miss(query->pipe, &stats);
 		if (result == DOCA_SUCCESS) {
-			new_misses = stats.total_pkts;
+			new_misses = stats.counter.total_pkts;
 		}
 	}
 	if (!suppress_output) {
@@ -1272,28 +1195,21 @@ void PSP_GatewayFlows::show_static_flow_counts(void)
 {
 	std::vector<pipe_query> queries;
 	queries.emplace_back(pipe_query{nullptr, default_rss_entry, "rss_pipe"});
-	queries.emplace_back(pipe_query{nullptr, root_jump_to_ingress_entry, "root_jump_to_ingress_entry"});
+	queries.emplace_back(pipe_query{nullptr, root_jump_to_ingress_ipv6_entry, "root_jump_to_ingress_ipv6_entry"});
+	queries.emplace_back(pipe_query{nullptr, root_jump_to_ingress_ipv4_entry, "root_jump_to_ingress_ipv4_entry"});
 	queries.emplace_back(pipe_query{nullptr, root_jump_to_egress_entry, "root_jump_to_egress_entry"});
+	queries.emplace_back(pipe_query{nullptr, root_default_drop, "root_miss_drop"});
 	queries.emplace_back(pipe_query{ingress_decrypt_pipe, default_decrypt_entry, "ingress_decrypt_pipe"});
 	queries.emplace_back(pipe_query{ingress_sampling_pipe, default_ingr_sampling_entry, "ingress_sampling_pipe"});
 	queries.emplace_back(pipe_query{ingress_acl_pipe, default_ingr_acl_entry, "ingress_acl_pipe"});
-	queries.emplace_back(pipe_query{nullptr, default_ingr_packet_spray_entry, "ingress_pkt_spray"});
-
 	for (int i = 0; i < NUM_OF_PSP_SYNDROMES; i++) {
 		queries.emplace_back(
 			pipe_query{nullptr, syndrome_stats_entries[i], "syndrome[" + std::to_string(i) + "]"});
 	}
-	if (false && app_config->enable_packet_spray) {
-		for (size_t i = 0; i < egr_packet_spray_entries.size(); i++) {
-			queries.emplace_back(pipe_query{nullptr,
-							egr_packet_spray_entries[i],
-							"egr_spray[" + std::to_string(i) + "]"});
-		}
-	}
-	queries.emplace_back(pipe_query{nullptr, empty_pipe_arp_entry, "egress_root"});
+	queries.emplace_back(pipe_query{empty_pipe, nullptr, "egress_root"});
 	queries.emplace_back(pipe_query{egress_acl_pipe, nullptr, "egress_acl_pipe"});
 	queries.emplace_back(pipe_query{egress_sampling_pipe, default_egr_sampling_entry, "egress_sampling_pipe"});
-	queries.emplace_back(pipe_query{nullptr, empty_pipe_arp_entry, "empty_pipe_arp_entry"});
+	queries.emplace_back(pipe_query{nullptr, empty_pipe_entry, "arp_packets_intercepted"});
 
 	uint64_t total_pkts = 0;
 	for (auto &query : queries) {
@@ -1315,16 +1231,17 @@ void PSP_GatewayFlows::show_static_flow_counts(void)
 void PSP_GatewayFlows::show_session_flow_count(const std::string &dst_vip, psp_session_t &session)
 {
 	if (session.encap_encrypt_entry) {
-		doca_flow_query encap_encrypt_stats = {};
-		doca_error_t encap_result = doca_flow_query_entry(session.encap_encrypt_entry, &encap_encrypt_stats);
+		doca_flow_resource_query encap_encrypt_stats = {};
+		doca_error_t encap_result =
+			doca_flow_resource_query_entry(session.encap_encrypt_entry, &encap_encrypt_stats);
 
 		if (encap_result == DOCA_SUCCESS) {
-			if (session.pkt_count_egress != encap_encrypt_stats.total_pkts) {
+			if (session.pkt_count_egress != encap_encrypt_stats.counter.total_pkts) {
 				DOCA_LOG_DBG("Session Egress entries: %p", session.encap_encrypt_entry);
 				DOCA_LOG_INFO("Session Egress flow %s: %ld hits",
 					      dst_vip.c_str(),
-					      encap_encrypt_stats.total_pkts);
-				session.pkt_count_egress = encap_encrypt_stats.total_pkts;
+					      encap_encrypt_stats.counter.total_pkts);
+				session.pkt_count_egress = encap_encrypt_stats.counter.total_pkts;
 			}
 		} else {
 			DOCA_LOG_INFO("Session Egress flow %s: query failed: %s",
@@ -1335,16 +1252,16 @@ void PSP_GatewayFlows::show_session_flow_count(const std::string &dst_vip, psp_s
 
 	if (!app_config->disable_ingress_acl && session.acl_entry) {
 		std::string src_vip = ipv4_to_string(session.src_vip);
-		doca_flow_query acl_stats = {};
-		doca_error_t result = doca_flow_query_entry(session.acl_entry, &acl_stats);
+		doca_flow_resource_query acl_stats = {};
+		doca_error_t result = doca_flow_resource_query_entry(session.acl_entry, &acl_stats);
 
 		if (result == DOCA_SUCCESS) {
-			if (session.pkt_count_ingress != acl_stats.total_pkts) {
+			if (session.pkt_count_ingress != acl_stats.counter.total_pkts) {
 				DOCA_LOG_DBG("Session ACL entry: %p", session.acl_entry);
 				DOCA_LOG_INFO("Session Ingress flow %s: %ld hits",
 					      src_vip.c_str(),
-					      acl_stats.total_pkts);
-				session.pkt_count_ingress = acl_stats.total_pkts;
+					      acl_stats.counter.total_pkts);
+				session.pkt_count_ingress = acl_stats.counter.total_pkts;
 			}
 		} else {
 			DOCA_LOG_INFO("Session Ingress flow %s: query failed: %s",

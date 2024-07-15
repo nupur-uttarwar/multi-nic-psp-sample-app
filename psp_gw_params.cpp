@@ -1,13 +1,25 @@
 /*
- * Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES, ALL RIGHTS RESERVED.
+ * Copyright (c) 2024 NVIDIA CORPORATION AND AFFILIATES.  All rights reserved.
  *
- * This software product is a proprietary product of NVIDIA CORPORATION &
- * AFFILIATES (the "Company") and all right, title, and interest in and to the
- * software product, including all associated intellectual property rights, are
- * and shall remain exclusively with the Company.
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright notice, this list of
+ *       conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright notice, this list of
+ *       conditions and the following disclaimer in the documentation and/or other materials
+ *       provided with the distribution.
+ *     * Neither the name of the NVIDIA CORPORATION nor the names of its contributors may be used
+ *       to endorse or promote products derived from this software without specific prior written
+ *       permission.
  *
- * This software product is governed by the End User License Agreement
- * provided with the software product.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TOR (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -89,53 +101,56 @@ static doca_error_t handle_core_mask_param(void *param, void *config)
 }
 
 /**
- * @brief Configures the next-hop dst-mac to apply on encap
+ * @brief Configures the dst-mac to apply on decap
  *
  * @param [in]: the dst mac addr
  * @config [in/out]: A void pointer to the application config struct
  * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
  */
-static doca_error_t handle_nexthop_dmac_file_param(void *param, void *config)
+static doca_error_t handle_decap_dmac_param(void *param, void *config)
 {
 	auto *app_config = (struct psp_gw_app_config *)config;
-	char *filename = (char *)param;
+	char *mac_addr = (char *)param;
 
-	std::ifstream in{filename};
-	if (!in.good()) {
-		DOCA_LOG_ERR("Failed to open nexthop file");
-		return DOCA_ERROR_NOT_FOUND;
+	if (!is_empty_mac_addr(app_config->dcap_dmac)) {
+		DOCA_LOG_ERR("Cannot specify both --decap-dmac and --vf-name");
+		return DOCA_ERROR_INVALID_VALUE;
 	}
 
-	for (std::string line; std::getline(in, line);) {
-		DOCA_LOG_DBG("%s", line.c_str());
-		if (line.length() == 0 || line[0] == '#') {
-			continue;
-		}
-
-		size_t sep = line.find(',');
-		if (sep == 0 || sep == std::string::npos) {
-			DOCA_LOG_ERR("Incorrect file format; expected pf-mac,nexthop-mac");
-			return DOCA_ERROR_INVALID_VALUE;
-		}
-
-		std::string pf_mac_str = line.substr(0, sep);
-		std::string nh_mac_str = line.substr(sep + 1);
-
-		rte_ether_addr pf_mac;
-		rte_ether_addr nh_mac;
-		if (rte_ether_unformat_addr(pf_mac_str.c_str(), &pf_mac) ||
-		    rte_ether_unformat_addr(nh_mac_str.c_str(), &nh_mac)) {
-			DOCA_LOG_ERR("Incorrect file format; expected pf-mac,nexthop-mac");
-			return DOCA_ERROR_INVALID_VALUE;
-		}
-
-		app_config->nexthop_dmac_lookup[pf_mac_str] = nh_mac_str;
+	if (rte_ether_unformat_addr(mac_addr, &app_config->dcap_dmac) != 0) {
+		DOCA_LOG_ERR("Malformed mac addr: %s", mac_addr);
+		return DOCA_ERROR_INVALID_VALUE;
 	}
 
-	app_config->nexthop_enable = true;
+	DOCA_LOG_INFO("Decap dmac: %s", mac_addr);
+	return DOCA_SUCCESS;
+}
 
-	DOCA_LOG_INFO("Processed nexthop file %s", filename);
+/**
+ * @brief Configures the local virtual IP address
+ *
+ * @param [in]: the virt IP addr
+ * @config [in/out]: A void pointer to the application config struct
+ * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
+ */
+static doca_error_t handle_local_vip_param(void *param, void *config)
+{
+	auto *app_config = (struct psp_gw_app_config *)config;
+	char *virt_ip_addr = (char *)param;
 
+	if (!app_config->local_vf_addr.empty()) {
+		DOCA_LOG_ERR("Cannot specify both --local-virt-ip and --vf-name");
+		return DOCA_ERROR_INVALID_VALUE;
+	}
+
+	rte_be32_t local_vip = 0;
+	if (inet_pton(AF_INET, virt_ip_addr, &local_vip) != 1) {
+		DOCA_LOG_ERR("Malformed virtual IP addr: %s", virt_ip_addr);
+		return DOCA_ERROR_INVALID_VALUE;
+	}
+
+	app_config->local_vf_addr = virt_ip_addr;
+	DOCA_LOG_INFO("Local Virtual IP addr: %s", app_config->local_vf_addr.c_str());
 	return DOCA_SUCCESS;
 }
 
@@ -152,11 +167,8 @@ static doca_error_t handle_nexthop_dmac_param(void *param, void *config)
 	char *mac_addr = (char *)param;
 
 	if (rte_ether_unformat_addr(mac_addr, &app_config->nexthop_dmac) != 0) {
-		doca_error_t result = handle_nexthop_dmac_file_param(param, config);
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Next-hop: not a valid mac address and not a valid lookup file: %s", mac_addr);
-		}
-		return result;
+		DOCA_LOG_ERR("Malformed mac addr: %s", mac_addr);
+		return DOCA_ERROR_INVALID_VALUE;
 	}
 
 	app_config->nexthop_enable = true;
@@ -165,6 +177,13 @@ static doca_error_t handle_nexthop_dmac_param(void *param, void *config)
 	return DOCA_SUCCESS;
 }
 
+/**
+ * @brief Parses a host string with optional subnet mask suffix (i.e. /24).
+ *
+ * @ip [in/out]: host string, returned with subnet mask suffix removed (and applied)
+ * @mask_len [out]: the subnet mask length if one was found; 32 (single host) otherwise
+ * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
+ */
 static doca_error_t parse_subnet_mask(std::string &ip, uint32_t &mask_len)
 {
 	mask_len = 32;
@@ -176,12 +195,27 @@ static doca_error_t parse_subnet_mask(std::string &ip, uint32_t &mask_len)
 	std::string mask_len_str = ip.substr(slash + 1);
 	mask_len = std::atoi(mask_len_str.c_str());
 
-	if (mask_len < 0 || mask_len > 32) {
+	if (mask_len == 0 || mask_len > 32) {
 		DOCA_LOG_ERR("Invalid IP addr mask string found: %s", ip.c_str());
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 
 	ip = ip.substr(0, slash);
+
+	if (mask_len < 32) {
+		// adjust the IP address to zero out the unmasked bits;
+		// i.e. 1.2.3.4/24 -> 1.2.3.0
+		doca_be32_t ip_parsed;
+		if (inet_pton(AF_INET, ip.c_str(), &ip_parsed) != 1) {
+			DOCA_LOG_ERR("Invalid IP addr found before mask: %s", ip.c_str());
+			return DOCA_ERROR_INVALID_VALUE;
+		}
+
+		uint32_t ip_native = RTE_BE32(ip_parsed);
+		uint32_t mask = (1 << (32 - mask_len)) - 1;
+		ip_native &= ~mask;
+		ip = ipv4_to_string(RTE_BE32(ip_native));
+	}
 
 	return DOCA_SUCCESS;
 }
@@ -214,9 +248,9 @@ static doca_error_t handle_tunnels_file_line(const std::string &line, psp_gw_app
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 
-	std::istringstream hosts;
-	hosts.str(line.substr(sep + 1));
-	for (std::string virt_ip; std::getline(hosts, virt_ip, ',');) {
+	std::istringstream vips;
+	vips.str(line.substr(sep + 1));
+	for (std::string virt_ip; std::getline(vips, virt_ip, ',');) {
 		uint32_t mask_len = 0;
 		doca_error_t result = parse_subnet_mask(virt_ip, mask_len);
 		if (result != DOCA_SUCCESS) {
@@ -227,17 +261,16 @@ static doca_error_t handle_tunnels_file_line(const std::string &line, psp_gw_app
 			return DOCA_ERROR_INVALID_VALUE;
 		}
 
-		if (inet_pton(AF_INET, virt_ip.c_str(), &host.vip) != 1) {
+		doca_be32_t vip;
+		if (inet_pton(AF_INET, virt_ip.c_str(), &vip) != 1) {
 			DOCA_LOG_ERR("Invalid virtual IPv4 addr: %s", virt_ip.c_str());
 			return DOCA_ERROR_INVALID_VALUE;
 		}
 
 		uint32_t n_hosts = 1 << (32 - mask_len); // note mask_len is between 16 and 32
 		for (uint32_t i = 0; i < n_hosts; i++) {
-			app_config->net_config.hosts.push_back(host);
-
 			if (i < 16) {
-				std::string host_virt_ip = ipv4_to_string(host.vip);
+				std::string host_virt_ip = ipv4_to_string(vip);
 				DOCA_LOG_INFO("Added Host %d: %s at %s",
 					      (int)app_config->net_config.hosts.size(),
 					      host_virt_ip.c_str(),
@@ -246,9 +279,12 @@ static doca_error_t handle_tunnels_file_line(const std::string &line, psp_gw_app
 				DOCA_LOG_INFO("And more Hosts... (%d)", n_hosts);
 			} // else, silent
 
-			host.vip = RTE_BE32(RTE_BE32(host.vip) + 1);
+			host.vips.push_back(vip);
+			vip = RTE_BE32(RTE_BE32(vip) + 1);
 		}
 	}
+
+	app_config->net_config.hosts.push_back(host);
 
 	return DOCA_SUCCESS;
 }
@@ -326,38 +362,6 @@ static doca_error_t handle_vc_param(void *param, void *config)
 	bool *bool_param = (bool *)param;
 	app_config->net_config.vc_enabled = *bool_param;
 	DOCA_LOG_INFO("PSP VCs %s", *bool_param ? "Enabled" : "Disabled");
-	return DOCA_SUCCESS;
-}
-
-/**
- * @brief Indicates the application should execute benchmarks
- *
- * @param [in]: A pointer to a boolean flag
- * @config [in/out]: A void pointer to the application config struct
- * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
- */
-static doca_error_t handle_benchmark_param(void *param, void *config)
-{
-	auto *app_config = (struct psp_gw_app_config *)config;
-	bool *bool_param = (bool *)param;
-	app_config->run_benchmarks_and_exit = *bool_param;
-	DOCA_LOG_INFO("PSP Benchmarking %s", *bool_param ? "Enabled" : "Disabled");
-	return DOCA_SUCCESS;
-}
-
-/**
- * @brief Indicates the application should enable packet spray across SPIs
- *
- * @param [in]: A pointer to a boolean flag
- * @config [in/out]: A void pointer to the application config struct
- * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
- */
-static doca_error_t handle_spray_param(void *param, void *config)
-{
-	auto *app_config = (struct psp_gw_app_config *)config;
-	bool *bool_param = (bool *)param;
-	app_config->enable_packet_spray = *bool_param;
-	DOCA_LOG_INFO("Enable packet spray %s", *bool_param ? "Enabled" : "Disabled");
 	return DOCA_SUCCESS;
 }
 
@@ -496,10 +500,29 @@ static doca_error_t handle_debug_keys_param(void *param, void *config)
 	return DOCA_SUCCESS;
 }
 
+/**
+ * @brief Indicates the name of the netdev used as the unsecured port.
+ * From this, derive the MAC and IP addresses.
+ *
+ * @param [in]: A pointer to a boolean flag
+ * @config [in/out]: A void pointer to the application config struct
+ * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
+ */
 static doca_error_t handle_vf_name_param(void *param, void *config)
 {
 	auto *app_config = (struct psp_gw_app_config *)config;
 	std::string vf_iface_name = (const char *)param;
+
+	if (!app_config->local_vf_addr.empty()) {
+		DOCA_LOG_ERR("Cannot specify both --vf-name and --local-virt-ip");
+		return DOCA_ERROR_INVALID_VALUE;
+	}
+
+	if (!is_empty_mac_addr(app_config->dcap_dmac)) {
+		DOCA_LOG_ERR("Cannot specify both --vf-name and --decap-dmac");
+		return DOCA_ERROR_INVALID_VALUE;
+	}
+
 	int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 	if (sockfd < 0) {
 		DOCA_LOG_ERR("Failed to open socket");
@@ -511,7 +534,6 @@ static doca_error_t handle_vf_name_param(void *param, void *config)
 
 	if (ioctl(sockfd, SIOCGIFADDR, &ifr) < 0) {
 		DOCA_LOG_ERR("Failed ioctl(sockfd, SIOCGIFADDR, &ifr)");
-		;
 		close(sockfd);
 		return DOCA_ERROR_IO_FAILED;
 	}
@@ -521,7 +543,6 @@ static doca_error_t handle_vf_name_param(void *param, void *config)
 
 	if (ioctl(sockfd, SIOCGIFHWADDR, &ifr) < 0) {
 		DOCA_LOG_ERR("Failed ioctl(sockfd, SIOCGIFHWADDR, &ifr)");
-		;
 		close(sockfd);
 		return DOCA_ERROR_IO_FAILED;
 	}
@@ -538,7 +559,65 @@ static doca_error_t handle_vf_name_param(void *param, void *config)
 }
 
 /**
- * @brief Indicates the application should log all encryption keys
+ * @brief Indicates wherever statistics should be printed
+ *
+ * @param [in]: A pointer to a boolean flag
+ * @config [in/out]: A void pointer to the application config struct
+ * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
+ */
+static doca_error_t handle_stats_print_param(void *param, void *config)
+{
+	auto *app_config = (struct psp_gw_app_config *)config;
+	bool *bool_param = (bool *)param;
+	app_config->print_stats = *bool_param;
+	DOCA_LOG_INFO("Stats %s", *bool_param ? "Enabled" : "Disabled");
+	return DOCA_SUCCESS;
+}
+
+/**
+ * @brief returns supported perf types as a string
+ *
+ * @supported_types [out]: string to store supported types
+ */
+static void get_supported_perf_types(std::string &supported_types)
+{
+	bool first = true;
+	for (const auto &type : PSP_PERF_MAP) {
+		supported_types += (first ? "" : ", ") + type.first;
+		first = false;
+	}
+}
+
+/**
+ * @brief indicates what performance printing should be enabled
+ *
+ * @param [in]: A pointer to a string types: key-gen, insertion
+ * @config [in/out]: A void pointer to the application config struct
+ * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
+ */
+static doca_error_t handle_perf_print_param(void *param, void *config)
+{
+	auto *app_config = (struct psp_gw_app_config *)config;
+
+	std::string perf_types = (const char *)param;
+	std::istringstream perf_types_stream(perf_types);
+	for (std::string perf_type; std::getline(perf_types_stream, perf_type, ',');) {
+		if (PSP_PERF_MAP.count(perf_type) == 0) {
+			std::string supported_types;
+			get_supported_perf_types(supported_types);
+			DOCA_LOG_ERR("Unsupported perf type: %s, supported types: %s",
+				     perf_type.c_str(),
+				     supported_types.c_str());
+			return DOCA_ERROR_INVALID_VALUE;
+		}
+		app_config->print_perf_flags |= PSP_PERF_MAP.at(perf_type);
+	}
+	DOCA_LOG_INFO("Enabled perf print for %s", perf_types.c_str());
+	return DOCA_SUCCESS;
+}
+
+/**
+ * @brief Indicates the application should log all packets received to RSS
  *
  * @param [in]: A pointer to a boolean flag
  * @config [in/out]: A void pointer to the application config struct
@@ -550,7 +629,31 @@ static doca_error_t handle_show_rss_rx_packets_param(void *param, void *config)
 	bool *bool_param = (bool *)param;
 	app_config->show_rss_rx_packets = *bool_param;
 	if (*bool_param) {
-		DOCA_LOG_INFO("NOTE: show_rss_rx_packets is enabled; rx packets received to RSS will be written to logs.");
+		DOCA_LOG_INFO(
+			"NOTE: show_rss_rx_packets is enabled; rx packets received to RSS will be written to logs.");
+	}
+	return DOCA_SUCCESS;
+}
+
+/**
+ * @brief Handle outer IP type param
+ *
+ * @param [in]: A pointer to a string flag
+ * @config [in/out]: A void pointer to the application config struct
+ * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
+ */
+static doca_error_t handle_outer_param(void *param, void *config)
+{
+	auto *app_config = (struct psp_gw_app_config *)config;
+	std::string outer_type = (const char *)param;
+
+	if (outer_type == "ipv4") {
+		app_config->outer = DOCA_FLOW_L3_TYPE_IP4;
+	} else if (outer_type == "ipv6") {
+		app_config->outer = DOCA_FLOW_L3_TYPE_IP6;
+	} else {
+		DOCA_LOG_ERR("Unsupported outer type: %s, supported types: ipv4, ipv6", outer_type.c_str());
+		return DOCA_ERROR_INVALID_VALUE;
 	}
 	return DOCA_SUCCESS;
 }
@@ -617,7 +720,7 @@ static doca_error_t psp_gw_register_params(void)
 
 	result = psp_gw_register_single_param("p",
 					      "pci-addr",
-					      "PCI BDF of the device in BB:DD.F format",
+					      "PCI BDF of the device in BB:DD.F format (required)",
 					      handle_pci_addr_param,
 					      DOCA_ARGP_TYPE_STRING,
 					      true,
@@ -627,7 +730,7 @@ static doca_error_t psp_gw_register_params(void)
 
 	result = psp_gw_register_single_param("r",
 					      "repr",
-					      "Device representor list in vf[x-y]pf[x-y] format",
+					      "Device representor list in vf[x-y]pf[x-y] format (required)",
 					      handle_repr_param,
 					      DOCA_ARGP_TYPE_STRING,
 					      true,
@@ -645,19 +748,39 @@ static doca_error_t psp_gw_register_params(void)
 	if (result != DOCA_SUCCESS)
 		return result;
 
+	result = psp_gw_register_single_param(nullptr,
+					      "decap-dmac",
+					      "mac_dst addr of the decapped packets",
+					      handle_decap_dmac_param,
+					      DOCA_ARGP_TYPE_STRING,
+					      false,
+					      false);
+	if (result != DOCA_SUCCESS)
+		return result;
+
+	result = psp_gw_register_single_param(nullptr,
+					      "local-virt-ip",
+					      "Local IP addr of VF",
+					      handle_local_vip_param,
+					      DOCA_ARGP_TYPE_STRING,
+					      false,
+					      false);
+	if (result != DOCA_SUCCESS)
+		return result;
+
 	result = psp_gw_register_single_param("d",
 					      "vf-name",
 					      "Name of the virtual function device / unsecured port",
 					      handle_vf_name_param,
 					      DOCA_ARGP_TYPE_STRING,
-					      true,
+					      false,
 					      false);
 	if (result != DOCA_SUCCESS)
 		return result;
 
 	result = psp_gw_register_single_param("n",
 					      "nexthop-dmac",
-					      "next-hop mac_dst addr of the encapped packets, or next-hop lookup file",
+					      "next-hop mac_dst addr of the encapped packets",
 					      handle_nexthop_dmac_param,
 					      DOCA_ARGP_TYPE_STRING,
 					      false,
@@ -716,7 +839,7 @@ static doca_error_t psp_gw_register_params(void)
 	if (result != DOCA_SUCCESS)
 		return result;
 
-	result = psp_gw_register_single_param("",
+	result = psp_gw_register_single_param(nullptr,
 					      "sample-rate",
 					      "Sets the log2 sample rate: 0: disabled, 1: 50%, ... 16: 1.5e-3%",
 					      handle_sample_param,
@@ -773,14 +896,13 @@ static doca_error_t psp_gw_register_params(void)
 					      DOCA_ARGP_TYPE_BOOLEAN,
 					      false,
 					      false);
-
 	if (result != DOCA_SUCCESS)
 		return result;
 
-	result = psp_gw_register_single_param("b",
-					      "benchmark",
-					      "Run PSP Benchmarks and exit",
-					      handle_benchmark_param,
+	result = psp_gw_register_single_param(nullptr,
+					      "stat-print",
+					      "Enable printing statistics",
+					      handle_stats_print_param,
 					      DOCA_ARGP_TYPE_BOOLEAN,
 					      false,
 					      false);
@@ -788,10 +910,10 @@ static doca_error_t psp_gw_register_params(void)
 		return result;
 
 	result = psp_gw_register_single_param(nullptr,
-					      "spray",
-					      "Spray packets across SPI tunnels",
-					      handle_spray_param,
-					      DOCA_ARGP_TYPE_BOOLEAN,
+					      "perf-print",
+					      "Enable printing performance metrics (key-gen, insertion, all)",
+					      handle_perf_print_param,
+					      DOCA_ARGP_TYPE_STRING,
 					      false,
 					      false);
 	if (result != DOCA_SUCCESS)
@@ -806,6 +928,14 @@ static doca_error_t psp_gw_register_params(void)
 					      false);
 	if (result != DOCA_SUCCESS)
 		return result;
+
+	result = psp_gw_register_single_param(nullptr,
+					      "outer-ip-type",
+					      "outer IP type",
+					      handle_outer_param,
+					      DOCA_ARGP_TYPE_STRING,
+					      false,
+					      false);
 
 	return result;
 }
@@ -832,6 +962,13 @@ doca_error_t psp_gw_argp_exec(int &argc, char *argv[], psp_gw_app_config *app_co
 		DOCA_LOG_ERR("Failed to parse application input: %s", doca_error_get_descr(result));
 		doca_argp_destroy();
 		return result;
+	}
+
+	if (app_config->local_vf_addr.empty() || is_empty_mac_addr(app_config->dcap_dmac)) {
+		DOCA_LOG_ERR("REQUIRED: One of (--vf-name) or (--decap-dmac + --local-virt-ip)");
+		doca_argp_usage();
+		doca_argp_destroy();
+		return DOCA_ERROR_INVALID_VALUE;
 	}
 
 	const char *eal_args[] = {"", "-a00:00.0", "-c", app_config->core_mask.c_str()};

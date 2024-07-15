@@ -1,13 +1,25 @@
 /*
- * Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES, ALL RIGHTS RESERVED.
+ * Copyright (c) 2024 NVIDIA CORPORATION AND AFFILIATES.  All rights reserved.
  *
- * This software product is a proprietary product of NVIDIA CORPORATION &
- * AFFILIATES (the "Company") and all right, title, and interest in and to the
- * software product, including all associated intellectual property rights, are
- * and shall remain exclusively with the Company.
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright notice, this list of
+ *       conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright notice, this list of
+ *       conditions and the following disclaimer in the documentation and/or other materials
+ *       provided with the distribution.
+ *     * Neither the name of the NVIDIA CORPORATION nor the names of its contributors may be used
+ *       to endorse or promote products derived from this software without specific prior written
+ *       permission.
  *
- * This software product is governed by the End User License Agreement
- * provided with the software product.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TOR (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -32,9 +44,6 @@ PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, PSP_GatewayFlows *ps
 	  pf(psp_flows->pf()),
 	  DEBUG_KEYS(config->debug_keys)
 {
-	for (uint32_t i = 1; i <= (config->max_tunnels + 1); ++i) {
-		available_crypto_ids.insert(i);
-	}
 }
 
 doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
@@ -59,8 +68,12 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 			return DOCA_ERROR_NOT_FOUND;
 		}
 
-		doca_error_t result =
-			request_tunnel_to_host(remote_host, ipv4_hdr->src_addr /* local addr */, true, false);
+		doca_error_t result = request_tunnel_to_host(remote_host,
+							     ipv4_hdr->src_addr /* local addr */,
+							     ipv4_hdr->dst_addr,
+							     true,
+							     false,
+							     true);
 		if (result != DOCA_SUCCESS) {
 			return result;
 		}
@@ -79,142 +92,181 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 	return DOCA_SUCCESS;
 }
 
-doca_error_t PSP_GatewayImpl::update_current_sessions()
-{
-	DOCA_LOG_DBG("Updating current sessions");
-
-	for (auto &session : sessions) {
-		psp_session_t *psp_session = &session.second;
-		psp_gw_host *remote_host = lookup_remote_host(psp_session->dst_vip);
-		if (remote_host == NULL) {
-			DOCA_LOG_ERR("Failed to find remote host for session %s",
-				     ipv4_to_string(psp_session->dst_vip).c_str());
-			return DOCA_ERROR_NOT_FOUND;
-		}
-
-		std::string remote_host_svc_pip = ipv4_to_string(remote_host->svc_ip);
-		auto *stub = get_stub(remote_host_svc_pip);
-
-		::grpc::ClientContext context;
-		::psp_gateway::UpdateTunnelRequest request;
-		::psp_gateway::UpdateTunnelResponse response;
-		request.set_request_id(++next_request_id);
-		// Note the src/dst are reversed from RequestTunnelParams()
-		request.set_virt_src_ip(config->local_vf_addr);
-		request.set_virt_dst_ip(ipv4_to_string(psp_session->src_vip));
-		doca_error_t result =
-			generate_tunnel_params((int)config->net_config.default_psp_proto_ver, request.mutable_params());
-		if (result != DOCA_SUCCESS) {
-			continue;
-		}
-		DOCA_LOG_INFO("Re-generated SPI/Key for %s: new SPI 0x%x",
-			      request.virt_src_ip().c_str(),
-			      request.params().spi());
-
-		::grpc::Status status = stub->UpdateTunnelParams(&context, request, &response);
-		if (!status.ok()) {
-			DOCA_LOG_ERR("Request for new SPI/Key to remote host %s failed: %s",
-				     remote_host_svc_pip.c_str(),
-				     status.error_message().c_str());
-			continue;
-		}
-
-		if (!config->disable_ingress_acl) {
-			psp_session->spi_ingress = request.params().spi();
-
-			// Note the old session.acl_entry should be freed later
-			result = psp_flows->add_ingress_acl_entry(psp_session);
-			if (result != DOCA_SUCCESS) {
-				DOCA_LOG_ERR("Failed to open ACL from %s on SPI 0x%x: %s",
-					     request.virt_src_ip().c_str(),
-					     psp_session->spi_ingress,
-					     doca_error_get_descr(result));
-				return result;
-			}
-
-			DOCA_LOG_INFO("Opened ACL from host %s on SPI 0x%x",
-				      request.virt_src_ip().c_str(),
-				      psp_session->spi_ingress);
-		}
-	}
-	return DOCA_SUCCESS;
-}
-
 doca_error_t PSP_GatewayImpl::request_tunnel_to_host(struct psp_gw_host *remote_host,
 						     doca_be32_t local_virt_ip,
+						     doca_be32_t remote_virt_ip,
 						     bool supply_reverse_params,
-						     bool suppress_failure_msg)
+						     bool suppress_failure_msg,
+						     bool has_remote)
 {
+	doca_error_t result;
+	uint32_t key_len_bits = psp_version_to_key_length_bits(config->net_config.default_psp_proto_ver);
+	uint32_t key_len_words = key_len_bits / 32;
+	uint32_t nb_pairs = has_remote ? 1 : remote_host->vips.size();
+	std::vector<uint32_t> keys(remote_host->vips.size() * key_len_words);
+	std::vector<uint32_t> spis(remote_host->vips.size());
+
 	std::string remote_host_svc_pip = ipv4_to_string(remote_host->svc_ip);
-	std::string remote_host_vip = ipv4_to_string(remote_host->vip);
 	std::string local_vip = ipv4_to_string(local_virt_ip);
+	int vip_id = -1;
 
 	auto *stub = get_stub(remote_host_svc_pip);
 
 	::grpc::ClientContext context;
-	::psp_gateway::NewTunnelRequest request;
+	::psp_gateway::MultiTunnelRequest request;
 	request.set_request_id(++next_request_id);
 	request.add_psp_versions_accepted(config->net_config.default_psp_proto_ver);
-	request.set_virt_src_ip(local_vip);
-	request.set_virt_dst_ip(remote_host_vip);
 
-	// Save a round-trip, if a local virtual IP was given.
-	// Otherwise, expect the remote host to send a separate request.
 	if (supply_reverse_params) {
-		if (!local_virt_ip) {
-			DOCA_LOG_ERR("Cannot create reverse params without a local virt ip addr");
-			return DOCA_ERROR_INVALID_VALUE;
-		}
-
-		doca_error_t result = generate_tunnel_params((int)config->net_config.default_psp_proto_ver,
-							     request.mutable_reverse_params());
+		result = generate_keys_spis(key_len_bits, nb_pairs, keys.data(), spis.data());
 		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to generate SPI/Key's for remote host %s: %s",
+				     remote_host_svc_pip.c_str(),
+				     doca_error_get_descr(result));
 			return result;
-		}
-
-		if (!config->disable_ingress_acl) {
-			auto &session = sessions[remote_host_vip];
-			session.spi_ingress = request.reverse_params().spi();
-			session.src_vip = remote_host->vip;
-			session.pkt_count_ingress = UINT64_MAX;
-
-			result = psp_flows->add_ingress_acl_entry(&session);
-			if (result != DOCA_SUCCESS) {
-				DOCA_LOG_ERR("Failed to open ACL from %s on SPI 0x%x: %s",
-					     remote_host_vip.c_str(),
-					     session.spi_ingress,
-					     doca_error_get_descr(result));
-				return result;
-			}
-
-			DOCA_LOG_INFO("Opened ACL from host %s on SPI 0x%x",
-				      remote_host_vip.c_str(),
-				      session.spi_ingress);
 		}
 	}
 
-	::psp_gateway::NewTunnelResponse response;
-	::grpc::Status status = stub->RequestTunnelParams(&context, request, &response);
+	for (size_t vip_idx = 0; vip_idx < remote_host->vips.size(); vip_idx++) {
+		if (has_remote) {
+			if (remote_host->vips[vip_idx] != remote_virt_ip)
+				continue;
+			else
+				vip_id = vip_idx;
+		}
+		std::string remote_host_vip = ipv4_to_string(remote_host->vips[vip_idx]);
+		::psp_gateway::SingleTunnelRequest *single_request = request.add_tunnels();
+		single_request->set_virt_src_ip(local_vip);
+		single_request->set_virt_dst_ip(remote_host_vip);
 
-	if (!status.ok()) {
+		// Save a round-trip, if a local virtual IP was given.
+		// Otherwise, expect the remote host to send a separate request.
+		if (supply_reverse_params) {
+			if (!local_virt_ip) {
+				DOCA_LOG_ERR("Cannot create reverse params without a local virt ip addr");
+				return DOCA_ERROR_INVALID_VALUE;
+			}
+
+			fill_tunnel_params(config->net_config.default_psp_proto_ver,
+					   &(keys[vip_idx * key_len_words]),
+					   spis[vip_idx],
+					   single_request->mutable_reverse_params());
+			debug_key("Generated",
+				  single_request->reverse_params().encryption_key().c_str(),
+				  key_len_bits / 8);
+
+			if (!config->disable_ingress_acl) {
+				auto &session = sessions[remote_host_vip];
+				session.spi_ingress = single_request->reverse_params().spi();
+				session.src_vip = remote_host->vips[vip_idx];
+				session.pkt_count_ingress = UINT64_MAX;
+
+				result = psp_flows->add_ingress_acl_entry(&session);
+				if (result != DOCA_SUCCESS) {
+					DOCA_LOG_ERR("Failed to open ACL from %s on SPI %d: %s",
+						     remote_host_vip.c_str(),
+						     session.spi_ingress,
+						     doca_error_get_descr(result));
+					return result;
+				}
+
+				DOCA_LOG_DBG("Opened ACL from host %s on SPI %d",
+					     remote_host_vip.c_str(),
+					     session.spi_ingress);
+			}
+		}
+	}
+
+	if (has_remote && vip_id == -1) {
+		DOCA_LOG_ERR("Remote virtual IP not found");
+		return DOCA_ERROR_NOT_FOUND;
+	}
+
+	::psp_gateway::MultiTunnelResponse response;
+	::grpc::Status status = stub->RequestMultipleTunnelParams(&context, request, &response);
+
+	if (!status.ok() || response.tunnels_params_size() != request.tunnels_size()) {
 		if (!suppress_failure_msg) {
-			DOCA_LOG_ERR("Request for new SPI/Key to remote host %s failed: %s",
+			DOCA_LOG_ERR("Request for new SPI/Key's to remote host %s failed: %s",
 				     remote_host_svc_pip.c_str(),
 				     status.error_message().c_str());
 		}
 		return DOCA_ERROR_IO_FAILED;
 	}
 
-	return create_tunnel_flow(remote_host, request.request_id(), response.params());
+	std::vector<psp_session_and_key_t> new_session_keys;
+	for (int i = 0; i < response.tunnels_params_size(); i++) {
+		if (supply_reverse_params) {
+			if (response.tunnels_params(i).encap_type() !=
+			    request.tunnels(i).reverse_params().encap_type()) {
+				if (!suppress_failure_msg)
+					DOCA_LOG_ERR("Encap type is different between request and response");
+				return DOCA_ERROR_INVALID_VALUE;
+			}
+		}
+		if (!has_remote)
+			vip_id = i;
+		result = prepare_session(remote_host_svc_pip,
+					 remote_host->vips[vip_id],
+					 response.tunnels_params(i),
+					 new_session_keys);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR(
+				"Failed to prepare session for remote host %s, request %ld: with remote vip %s: %s",
+				remote_host_svc_pip.c_str(),
+				request.request_id(),
+				ipv4_to_string(remote_host->vips[i]).c_str(),
+				doca_error_get_descr(result));
+			return result;
+		}
+	}
+	result = add_encrypt_entries(new_session_keys, remote_host_svc_pip);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to add encrypt entries for remote host %s: %s",
+			     remote_host_svc_pip.c_str(),
+			     doca_error_get_descr(result));
+		return result;
+	}
+
+	return DOCA_SUCCESS;
 }
 
-doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remote_host,
-						 uint64_t request_id,
-						 const psp_gateway::TunnelParameters &params)
+doca_error_t PSP_GatewayImpl::add_encrypt_entries(std::vector<psp_session_and_key_t> &new_sessions_keys,
+						  std::string remote_host_svc_ip)
 {
-	doca_error_t result = DOCA_SUCCESS;
-	std::string remote_host_svc_ip = ipv4_to_string(remote_host->svc_ip);
-	std::string remote_host_vip = ipv4_to_string(remote_host->vip);
+	DOCA_LOG_DBG("Adding %d encrypt entries for remote host %s",
+		     (int)new_sessions_keys.size(),
+		     remote_host_svc_ip.c_str());
+
+	uint64_t start_time = rte_get_tsc_cycles();
+	for (int i = 0; i < (int)new_sessions_keys.size(); i++) {
+		doca_error_t result =
+			psp_flows->add_encrypt_entry(new_sessions_keys[i].first, new_sessions_keys[i].second);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to add encrypt entry for %s: %s",
+				     remote_host_svc_ip.c_str(),
+				     doca_error_get_descr(result));
+			return result;
+		}
+	}
+	uint64_t end_time = rte_get_tsc_cycles();
+	double total_time = (end_time - start_time) / (double)rte_get_tsc_hz();
+	double kilo_eps = 1e-3 * new_sessions_keys.size() / total_time;
+	if (config->print_perf_flags & PSP_PERF_INSERTION_PRINT) {
+		DOCA_LOG_INFO("Added %d encrypt entries in %f seconds, %f Kilo-EPS",
+			      (int)new_sessions_keys.size(),
+			      total_time,
+			      kilo_eps);
+	}
+	return DOCA_SUCCESS;
+}
+
+doca_error_t PSP_GatewayImpl::prepare_session(std::string remote_host_svc_ip,
+					      doca_be32_t remote_vip,
+					      const psp_gateway::TunnelParameters &params,
+					      std::vector<psp_session_and_key_t> &sessions_keys_prepared)
+{
+	std::string remote_host_vip = ipv4_to_string(remote_vip);
 
 	if (!is_psp_ver_supported(params.psp_version())) {
 		DOCA_LOG_ERR("Request for unsupported PSP version %d", params.psp_version());
@@ -231,71 +283,47 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 		return DOCA_ERROR_IO_FAILED;
 	}
 
-	uint32_t crypto_id = allocate_crypto_id();
+	uint32_t crypto_id = next_crypto_id();
 	if (crypto_id == UINT32_MAX) {
 		DOCA_LOG_ERR("Exhausted available crypto_ids; cannot complete new tunnel");
 		return DOCA_ERROR_NO_MEMORY;
 	}
 
-	const void *encrypt_key = params.encryption_key().c_str();
-	DOCA_LOG_INFO("Received tunnel params from %s, SPI 0x%x", remote_host_svc_ip.c_str(), params.spi());
-	debug_key("Received", encrypt_key, params.encryption_key().size());
-
-	// If there is an existing session, we should update it instead of making a new one
-	auto existing_session = sessions.find(remote_host_vip);
-	if (existing_session != sessions.end() && existing_session->second.encap_encrypt_entry) {
-		DOCA_LOG_WARN("Session already exists for remote host %s. Updating it.", remote_host_vip.c_str());
-		psp_session_t new_session = existing_session->second; // copy
-		new_session.crypto_id = crypto_id;
-		new_session.spi_egress = params.spi();
-
-		result = psp_flows->update_encrypt_entry(&new_session, encrypt_key);
-		if (result != DOCA_SUCCESS) {
-			release_crypto_id(crypto_id);
-			return result;
-		}
-
-		release_crypto_id(existing_session->second.crypto_id);
-		existing_session->second = new_session;
-		return DOCA_SUCCESS;
-	}
-
 	auto &session = sessions[remote_host_vip];
-	session.dst_vip = remote_host->vip;
+	session.dst_vip = remote_vip;
 	session.spi_egress = params.spi();
 	session.crypto_id = crypto_id;
 	session.psp_proto_ver = params.psp_version();
 	session.vc = params.virt_cookie();
+	void *enc_key = (void *)params.encryption_key().c_str();
 
 	if (rte_ether_unformat_addr(params.mac_addr().c_str(), &session.dst_mac)) {
 		DOCA_LOG_ERR("Failed to convert mac addr: %s", params.mac_addr().c_str());
 		sessions.erase(remote_host_vip);
-		release_crypto_id(crypto_id);
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 
-	if (inet_pton(AF_INET6, params.ip_addr().c_str(), session.dst_pip) != 1) {
-		DOCA_LOG_ERR("Failed to parse dst_pip %s", params.ip_addr().c_str());
-		sessions.erase(remote_host_vip);
-		release_crypto_id(crypto_id);
-		return DOCA_ERROR_INVALID_VALUE;
+	if (params.encap_type() == 6) {
+		session.dst_pip.type = DOCA_FLOW_L3_TYPE_IP6;
+		if (inet_pton(AF_INET6, params.ip_addr().c_str(), session.dst_pip.ipv6_addr) != 1) {
+			DOCA_LOG_ERR("Failed to parse dst_pip %s", params.ip_addr().c_str());
+			sessions.erase(remote_host_vip);
+			return DOCA_ERROR_INVALID_VALUE;
+		}
+	} else if (params.encap_type() == 4) {
+		session.dst_pip.type = DOCA_FLOW_L3_TYPE_IP4;
+		if (inet_pton(AF_INET, params.ip_addr().c_str(), &session.dst_pip.ipv4_addr) != 1) {
+			DOCA_LOG_ERR("Failed to parse dst_pip %s", params.ip_addr().c_str());
+			sessions.erase(remote_host_vip);
+			return DOCA_ERROR_INVALID_VALUE;
+		}
 	}
-
-	result = psp_flows->add_encrypt_entry(&session, encrypt_key);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to create session from %s request %ld: %s",
-			     remote_host_svc_ip.c_str(),
-			     request_id,
-			     doca_error_get_descr(result));
-		release_crypto_id(crypto_id);
-		sessions.erase(remote_host_vip);
-		return result;
-	}
+	sessions_keys_prepared.push_back({&session, enc_key});
 
 	return DOCA_SUCCESS;
 }
 
-int PSP_GatewayImpl::select_psp_version(const ::psp_gateway::NewTunnelRequest *request) const
+int PSP_GatewayImpl::select_psp_version(const ::psp_gateway::MultiTunnelRequest *request) const
 {
 	for (int ver : request->psp_versions_accepted()) {
 		if (is_psp_ver_supported(ver) > 0)
@@ -304,17 +332,14 @@ int PSP_GatewayImpl::select_psp_version(const ::psp_gateway::NewTunnelRequest *r
 	return -1;
 }
 
-::grpc::Status PSP_GatewayImpl::RequestTunnelParams(::grpc::ServerContext *context,
-						    const ::psp_gateway::NewTunnelRequest *request,
-						    ::psp_gateway::NewTunnelResponse *response)
+::grpc::Status PSP_GatewayImpl::RequestMultipleTunnelParams(::grpc::ServerContext *context,
+							    const ::psp_gateway::MultiTunnelRequest *request,
+							    ::psp_gateway::MultiTunnelResponse *response)
 {
 	doca_error_t result;
-
 	std::string peer = context ? context->peer() // note: NOT authenticated
 				     :
 				     "[TESTING]";
-
-	response->set_request_id(request->request_id());
 
 	int psp_ver = select_psp_version(request);
 	if (psp_ver < 0) {
@@ -323,194 +348,191 @@ int PSP_GatewayImpl::select_psp_version(const ::psp_gateway::NewTunnelRequest *r
 			supported_psp_versions += std::to_string(psp_ver) + " ";
 		}
 		supported_psp_versions += "]";
-		std::string error_str = "Rejecting tunnel request from peer " + peer + ", PSP verison must be one of " +
+		std::string error_str = "Rejecting tunnel request from peer " + peer + ", PSP version must be one of " +
 					supported_psp_versions;
 		DOCA_LOG_ERR("%s", error_str.c_str());
 		return ::grpc::Status(::grpc::INVALID_ARGUMENT, error_str);
 	}
+	uint32_t key_len_bits = psp_version_to_key_length_bits(psp_ver);
+	uint32_t key_len_words = key_len_bits / 32;
+	std::vector<uint32_t> keys(request->tunnels_size() * key_len_words);
+	std::vector<uint32_t> spis(request->tunnels_size());
 
-	result = generate_tunnel_params(psp_ver, response->mutable_params());
+	result = generate_keys_spis(key_len_bits, request->tunnels_size(), keys.data(), spis.data());
 	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to generate SPI/Key's for remote host %s: %s",
+			     peer.c_str(),
+			     doca_error_get_descr(result));
 		return ::grpc::Status(::grpc::RESOURCE_EXHAUSTED, "Failed to generate SPI/Key");
 	}
 
-	DOCA_LOG_INFO("SPI 0x%x generated for addr %s on peer %s",
-		      response->params().spi(),
-		      request->virt_src_ip().c_str(),
-		      peer.c_str());
+	response->set_request_id(request->request_id());
 
-	if (!config->disable_ingress_acl) {
-		auto &session = sessions[request->virt_src_ip()];
-		session.spi_ingress = response->params().spi();
-		if (inet_pton(AF_INET, request->virt_src_ip().c_str(), &session.src_vip) != 1) {
-			return ::grpc::Status(grpc::INVALID_ARGUMENT,
-					      "Failed to parse virt_src_ip: " + request->virt_src_ip());
+	std::vector<psp_session_and_key_t> reversed_sessions_keys;
+
+	for (int tun_idx = 0; tun_idx < request->tunnels_size(); tun_idx++) {
+		const ::psp_gateway::SingleTunnelRequest &single_request = request->tunnels(tun_idx);
+
+		::psp_gateway::TunnelParameters *params = response->add_tunnels_params();
+		std::string src_vip = single_request.virt_src_ip();
+
+		fill_tunnel_params(psp_ver, &(keys[tun_idx * key_len_words]), spis[tun_idx], params);
+		DOCA_LOG_DBG("#%d: SPI %d generated for addr %s on peer %s",
+			     tun_idx,
+			     params->spi(),
+			     src_vip.c_str(),
+			     peer.c_str());
+		debug_key("Generated", params->encryption_key().c_str(), key_len_bits / 8);
+
+		if (!config->disable_ingress_acl) {
+			auto &session = sessions[src_vip];
+			session.spi_ingress = params->spi();
+			if (inet_pton(AF_INET, src_vip.c_str(), &session.src_vip) != 1) {
+				return ::grpc::Status(grpc::INVALID_ARGUMENT,
+						      "Failed to parse virt_src_ip: " + src_vip);
+			}
+			session.pkt_count_ingress = UINT64_MAX;
+
+			result = psp_flows->add_ingress_acl_entry(&session);
+			if (result != DOCA_SUCCESS) {
+				DOCA_LOG_ERR("Failed to open ACL from %s on SPI %d: %s",
+					     src_vip.c_str(),
+					     session.spi_ingress,
+					     doca_error_get_descr(result));
+				return ::grpc::Status(grpc::INTERNAL, "Failed to create ingress ACL session flow");
+			}
+
+			DOCA_LOG_DBG("Opened ACL from host %s on SPI %d", src_vip.c_str(), session.spi_ingress);
 		}
-		session.pkt_count_ingress = UINT64_MAX;
 
-		result = psp_flows->add_ingress_acl_entry(&session);
+		if (single_request.has_reverse_params()) {
+			if ((single_request.reverse_params().encap_type() == 4 &&
+			     config->outer == DOCA_FLOW_L3_TYPE_IP6) ||
+			    (single_request.reverse_params().encap_type() == 6 &&
+			     config->outer == DOCA_FLOW_L3_TYPE_IP4)) {
+				DOCA_LOG_ERR("Invalid encap type");
+				return ::grpc::Status(::grpc::INVALID_ARGUMENT, "Received invalid encap type");
+			}
+			doca_be32_t remote_host_vip = {};
+
+			if (inet_pton(AF_INET, src_vip.c_str(), &remote_host_vip) != 1) {
+				return ::grpc::Status(grpc::INVALID_ARGUMENT,
+						      "Failed to parse virt_src_ip: " + src_vip);
+			}
+
+			result = prepare_session(peer,
+						 remote_host_vip,
+						 single_request.reverse_params(),
+						 reversed_sessions_keys);
+			if (result != DOCA_SUCCESS) {
+				return ::grpc::Status(::grpc::UNKNOWN,
+						      "Failed to prepare session for remote host " +
+							      std::to_string(request->request_id()));
+			}
+			DOCA_LOG_DBG("Created return flow on SPI %d to peer %s",
+				     single_request.reverse_params().spi(),
+				     peer.c_str());
+		}
+	}
+
+	if (reversed_sessions_keys.size() > 0) {
+		result = add_encrypt_entries(reversed_sessions_keys, peer);
 		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to open ACL from %s on SPI 0x%x: %s",
-				     request->virt_src_ip().c_str(),
-				     session.spi_ingress,
+			DOCA_LOG_ERR("Failed to add encrypt entries for remote host %s: %s",
+				     peer.c_str(),
 				     doca_error_get_descr(result));
 			return ::grpc::Status(grpc::INTERNAL, "Failed to create ingress ACL session flow");
 		}
-
-		DOCA_LOG_INFO("Opened ACL from host %s on SPI 0x%x",
-			      request->virt_src_ip().c_str(),
-			      session.spi_ingress);
-	}
-
-	if (request->has_reverse_params()) {
-		struct psp_gw_host remote_host = {};
-
-		if (inet_pton(AF_INET, request->virt_src_ip().c_str(), &remote_host.vip) != 1) {
-			return ::grpc::Status(grpc::INVALID_ARGUMENT,
-					      "Failed to parse virt_src_ip: " + request->virt_src_ip());
-		}
-		// remote_host.svc_ip not used
-
-		result = create_tunnel_flow(&remote_host, request->request_id(), request->reverse_params());
-		if (result != DOCA_SUCCESS) {
-			return ::grpc::Status(::grpc::UNKNOWN,
-					      "Failed to create the return flow for request " +
-						      std::to_string(request->request_id()));
-		}
-		DOCA_LOG_INFO("Created return flow on SPI 0x%x to peer %s",
-			      request->reverse_params().spi(),
-			      peer.c_str());
 	}
 
 	return ::grpc::Status::OK;
 }
 
-doca_error_t PSP_GatewayImpl::generate_tunnel_params(int psp_ver, psp_gateway::TunnelParameters *params)
+void PSP_GatewayImpl::fill_tunnel_params(int psp_ver, uint32_t *key, uint32_t spi, psp_gateway::TunnelParameters *params)
 {
-	doca_error_t result;
-
 	uint32_t key_len_bits = psp_version_to_key_length_bits(psp_ver);
-	auto *bulk_key_gen = this->get_bulk_key_gen(key_len_bits);
-	if (!bulk_key_gen) {
-		DOCA_LOG_ERR("Failed to allocate bulk-key-gen object");
-		return DOCA_ERROR_NO_MEMORY;
-	}
-
-	result = doca_flow_crypto_psp_spi_key_bulk_generate(bulk_key_gen);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to generate keys and SPIs: %s", doca_error_get_descr(result));
-		return DOCA_ERROR_IO_FAILED;
-	}
-
-	uint32_t spi = 0;
-	uint32_t key_len_words = key_len_bits / 32;
-	uint32_t key[key_len_words] = {}; // key is copied here from bulk
-	result = doca_flow_crypto_psp_spi_key_bulk_get(bulk_key_gen, 0, &spi, key);
-	doca_flow_crypto_psp_spi_key_wipe(bulk_key_gen, 0);
-
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to retrieve SPI/Key: %s", doca_error_get_descr(result));
-		return DOCA_ERROR_IO_FAILED;
-	}
-
 	uint32_t key_len_bytes = key_len_bits / 8;
+
 	params->set_mac_addr(pf->src_mac_str);
 	params->set_ip_addr(pf->src_pip_str);
 	params->set_psp_version(psp_ver);
 	params->set_spi(spi);
 	params->set_encryption_key(key, key_len_bytes);
 	params->set_virt_cookie(0x778899aabbccddee);
-
-	debug_key("Generated", key, key_len_bytes);
-
-	return DOCA_SUCCESS;
+	if (config->outer == DOCA_FLOW_L3_TYPE_IP4)
+		params->set_encap_type(4);
+	else
+		params->set_encap_type(6);
 }
 
-::grpc::Status PSP_GatewayImpl::UpdateTunnelParams(::grpc::ServerContext *context,
-						   const ::psp_gateway::UpdateTunnelRequest *request,
-						   ::psp_gateway::UpdateTunnelResponse *response)
+doca_error_t PSP_GatewayImpl::generate_keys_spis(uint32_t key_len_bits,
+						 uint32_t nr_keys_spis,
+						 uint32_t *keys,
+						 uint32_t *spis)
 {
-	std::string remote_host_svc_ip = context ? context->peer() : "[TESTING]";
-	std::string local_vip = request->virt_dst_ip();
-	std::string remote_vip = request->virt_src_ip();
+	doca_error_t result;
+	struct doca_flow_crypto_psp_spi_key_bulk *bulk_key_gen = nullptr;
 
-	// If there is an existing session, we should update it instead of making a new one
-	auto existing_session = sessions.find(remote_vip);
-	if (existing_session == sessions.end() || !existing_session->second.encap_encrypt_entry) {
-		DOCA_LOG_WARN("UpdateTunnelParams: Session not found for remote host %s (%s->%s).",
-			      remote_host_svc_ip.c_str(),
-			      remote_vip.c_str(),
-			      local_vip.c_str());
-		return ::grpc::Status(::grpc::INVALID_ARGUMENT, "Unknown virt_src_ip");
+	auto key_type = key_len_bits == 128 ? DOCA_FLOW_CRYPTO_KEY_128 : DOCA_FLOW_CRYPTO_KEY_256;
+	auto key_array_size = key_len_bits / 32; // 32-bit words
+
+	DOCA_LOG_DBG("Generating %d SPI/Key pairs", nr_keys_spis);
+
+	result = doca_flow_crypto_psp_spi_key_bulk_alloc(pf->port_obj, key_type, nr_keys_spis, &bulk_key_gen);
+	if (result != DOCA_SUCCESS || !bulk_key_gen) {
+		DOCA_LOG_ERR("Failed to allocate bulk-key-gen object: %s", doca_error_get_descr(result));
+		return DOCA_ERROR_NO_MEMORY;
 	}
 
-	doca_error_t result = DOCA_SUCCESS;
-
-	auto &params = request->params();
-	if (!is_psp_ver_supported(params.psp_version())) {
-		DOCA_LOG_ERR("Request for unsupported PSP version %d", params.psp_version());
-		return ::grpc::Status(::grpc::INVALID_ARGUMENT, "Invalid PSP version");
-	}
-
-	uint32_t key_len_bytes = psp_version_to_key_length_bits(params.psp_version()) / 8;
-
-	if (params.encryption_key().size() != key_len_bytes) {
-		DOCA_LOG_ERR("Request for new SPI/Key to remote host %s failed: %s (%ld)",
-			     remote_host_svc_ip.c_str(),
-			     "Invalid encryption key length",
-			     params.encryption_key().size() * 8);
-		return ::grpc::Status(::grpc::INVALID_ARGUMENT, "Invalid key size");
-	}
-
-	uint32_t crypto_id = allocate_crypto_id();
-	if (crypto_id == UINT32_MAX) {
-		DOCA_LOG_ERR("Exhausted available crypto_ids; cannot complete new tunnel");
-		return ::grpc::Status(::grpc::RESOURCE_EXHAUSTED,
-				      "Exhausted available crypto_ids; cannot complete new tunnel");
-	}
-
-	const void *encrypt_key = params.encryption_key().c_str();
-	DOCA_LOG_INFO("Received tunnel params from %s, SPI 0x%x", remote_host_svc_ip.c_str(), params.spi());
-	debug_key("Received", encrypt_key, params.encryption_key().size());
-
-	psp_session_t new_session = existing_session->second; // copy
-	new_session.crypto_id = crypto_id;
-	new_session.spi_egress = params.spi();
-
-	result = psp_flows->update_encrypt_entry(&new_session, encrypt_key);
+	uint64_t start_time = rte_get_tsc_cycles();
+	result = doca_flow_crypto_psp_spi_key_bulk_generate(bulk_key_gen);
 	if (result != DOCA_SUCCESS) {
-		release_crypto_id(crypto_id);
-		return ::grpc::Status(::grpc::INTERNAL, "Failed to update tunnel flow");
+		DOCA_LOG_ERR("Failed to generate keys and SPIs: %s", doca_error_get_descr(result));
+		doca_flow_crypto_psp_spi_key_bulk_free(bulk_key_gen);
+		return DOCA_ERROR_IO_FAILED;
 	}
 
-	release_crypto_id(existing_session->second.crypto_id);
-	existing_session->second = new_session;
-	return ::grpc::Status::OK;
+	for (uint32_t i = 0; i < nr_keys_spis; i++) {
+		uint32_t *cur_key = keys + (i * key_array_size);
+		result = doca_flow_crypto_psp_spi_key_bulk_get(bulk_key_gen, i, &spis[i], cur_key);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to retrieve SPI/Key: %s", doca_error_get_descr(result));
+			doca_flow_crypto_psp_spi_key_bulk_free(bulk_key_gen);
+			return DOCA_ERROR_IO_FAILED;
+		}
+	}
+
+	uint64_t end_time = rte_get_tsc_cycles();
+	double total_time = (end_time - start_time) / (double)rte_get_tsc_hz();
+	double kilo_kps = 1e-3 * nr_keys_spis / total_time;
+	if (config->print_perf_flags & PSP_PERF_KEY_GEN_PRINT) {
+		DOCA_LOG_INFO("Generated %d SPI/Key pairs in %f seconds, %f KILO-KPS",
+			      nr_keys_spis,
+			      total_time,
+			      kilo_kps);
+	}
+
+	doca_flow_crypto_psp_spi_key_bulk_free(bulk_key_gen);
+
+	return DOCA_SUCCESS;
 }
 
 ::grpc::Status PSP_GatewayImpl::RequestKeyRotation(::grpc::ServerContext *context,
 						   const ::psp_gateway::KeyRotationRequest *request,
 						   ::psp_gateway::KeyRotationResponse *response)
 {
-	doca_error_t result;
-
 	(void)context;
-	DOCA_LOG_INFO("Received PSP Master Key Rotation Request");
+	DOCA_LOG_DBG("Received PSP Master Key Rotation Request");
 
 	response->set_request_id(request->request_id());
 
-	result = doca_flow_crypto_psp_master_key_rotate(pf->port_obj);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_WARN("Key Rotation Failed: %s", doca_error_get_descr(result));
-		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Key Rotation Failed");
+	if (request->issue_new_keys()) {
+		return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "Re-key not implemented");
 	}
 
-	if (request->issue_new_keys()) {
-		result = update_current_sessions();
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to update current sessions: %s", doca_error_get_descr(result));
-			return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Failed to update current sessions");
-		}
+	doca_error_t result = doca_flow_crypto_psp_master_key_rotate(pf->port_obj);
+	if (result != DOCA_SUCCESS) {
+		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Key Rotation Failed");
 	}
 
 	return ::grpc::Status::OK;
@@ -520,7 +542,7 @@ size_t PSP_GatewayImpl::try_connect(std::vector<psp_gw_host> &hosts, rte_be32_t 
 {
 	size_t num_connected = 0;
 	for (auto host_iter = hosts.begin(); host_iter != hosts.end(); /* increment below */) {
-		doca_error_t result = request_tunnel_to_host(&*host_iter, local_vf_addr, false, true);
+		doca_error_t result = request_tunnel_to_host(&*host_iter, local_vf_addr, 0, false, true, false);
 		if (result == DOCA_SUCCESS) {
 			++num_connected;
 			host_iter = hosts.erase(host_iter);
@@ -534,8 +556,10 @@ size_t PSP_GatewayImpl::try_connect(std::vector<psp_gw_host> &hosts, rte_be32_t 
 psp_gw_host *PSP_GatewayImpl::lookup_remote_host(rte_be32_t dst_vip)
 {
 	for (auto &host : config->net_config.hosts) {
-		if (host.vip == dst_vip) {
-			return &host;
+		for (auto vip : host.vips) {
+			if (vip == dst_vip) {
+				return &host;
+			}
 		}
 	}
 	return nullptr;
@@ -549,27 +573,12 @@ doca_error_t PSP_GatewayImpl::show_flow_counts(void)
 	return DOCA_SUCCESS;
 }
 
-uint32_t PSP_GatewayImpl::allocate_crypto_id(void)
+uint32_t PSP_GatewayImpl::next_crypto_id(void)
 {
-	if (available_crypto_ids.empty()) {
-		DOCA_LOG_WARN("Exhausted available crypto_ids");
+	if (next_crypto_id_ > config->max_tunnels) {
 		return UINT32_MAX;
 	}
-
-	auto crypto_id_it = available_crypto_ids.begin();
-	uint32_t crypto_id = *crypto_id_it;
-	available_crypto_ids.erase(crypto_id);
-	DOCA_LOG_DBG("Allocated crypto_id %d", crypto_id);
-	return crypto_id;
-}
-
-void PSP_GatewayImpl::release_crypto_id(uint32_t crypto_id)
-{
-	if (available_crypto_ids.find(crypto_id) != available_crypto_ids.end()) {
-		DOCA_LOG_WARN("Crypto ID %d already released", crypto_id);
-	}
-	DOCA_LOG_DBG("Released crypto_id %d", crypto_id);
-	available_crypto_ids.insert(crypto_id);
+	return next_crypto_id_++;
 }
 
 ::psp_gateway::PSP_Gateway::Stub *PSP_GatewayImpl::get_stub(const std::string &remote_host_ip)
@@ -589,19 +598,6 @@ void PSP_GatewayImpl::release_crypto_id(uint32_t crypto_id)
 	DOCA_LOG_INFO("Created gRPC stub for remote host %s", remote_host_addr.c_str());
 
 	return stubs_iter->second.get();
-}
-
-struct doca_flow_crypto_psp_spi_key_bulk *PSP_GatewayImpl::get_bulk_key_gen(uint32_t key_size_bits)
-{
-	auto &key_gen = key_size_bits == 128 ? bulk_key_gen_128 : bulk_key_gen_256;
-	if (!key_gen) {
-		auto key_type = key_size_bits == 128 ? DOCA_FLOW_CRYPTO_KEY_128 : DOCA_FLOW_CRYPTO_KEY_256;
-		doca_error_t result = doca_flow_crypto_psp_spi_key_bulk_alloc(pf->port_obj, key_type, 1, &key_gen);
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to allocate bulk-key-gen object: %s", doca_error_get_descr(result));
-		}
-	}
-	return key_gen;
 }
 
 void PSP_GatewayImpl::debug_key(const char *msg_prefix, const void *key, size_t key_size_bytes) const
