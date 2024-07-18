@@ -144,7 +144,6 @@ doca_error_t PSP_GatewayImpl::init_devs(void) {
 
 doca_error_t PSP_GatewayImpl::init_flows(void) {
 	doca_error_t result = DOCA_SUCCESS;
-	DOCA_LOG_INFO("Initializing PSP Gateway Flows");
 
 	IF_SUCCESS(result, init_doca_flow());
 	IF_SUCCESS(result, psp_flows->init_flows());
@@ -195,11 +194,12 @@ void PSP_GatewayImpl::launch_lcores(volatile bool *force_quit) {
 		0,
 		this,
 	};
+	lcore_params_list.push_back(lcore_params);
 
 	uint32_t lcore_id;
 	RTE_LCORE_FOREACH_WORKER(lcore_id)
 	{
-		rte_eal_remote_launch(lcore_pkt_proc_func, &lcore_params, lcore_id);
+		rte_eal_remote_launch(lcore_pkt_proc_func, &lcore_params_list.back(), lcore_id);
 	}
 
 }

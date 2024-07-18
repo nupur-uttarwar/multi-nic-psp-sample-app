@@ -171,6 +171,8 @@ private:
 
 	// map each svc_ip to an RPC object
 	std::map<std::string, std::unique_ptr<::psp_gateway::PSP_Gateway::Stub>> stubs;
+
+	std::vector<struct lcore_params> lcore_params_list;
 };
 
 #endif // _PSP_GW_SVC_H

@@ -156,7 +156,9 @@ doca_error_t PSP_GatewayFlows::init_flows(void)
 {
 	doca_error_t result = DOCA_SUCCESS;
 
-	DOCA_LOG_INFO("Initializing PSP Gateway Flows on port %d", pf_dev.pf_port_id);
+	IF_SUCCESS(result, start_port(pf_dev.pf_port_id, pf_dev.dev, &pf_dev.pf_port));
+	IF_SUCCESS(result, start_port(pf_dev.vf_port_id, nullptr, &pf_dev.vf_port));
+
 
 	return result;
 }
@@ -239,7 +241,6 @@ doca_error_t PSP_GatewayFlows::start_port(uint16_t port_id, doca_dev *port_dev, 
 	IF_SUCCESS(result, doca_flow_port_cfg_set_devargs(port_cfg, port_id_str.c_str()));
 	IF_SUCCESS(result, doca_flow_port_cfg_set_dev(port_cfg, port_dev));
 	IF_SUCCESS(result, doca_flow_port_start(port_cfg, port));
-
 	if (result == DOCA_SUCCESS) {
 		rte_ether_addr port_mac_addr;
 		rte_eth_macaddr_get(port_id, &port_mac_addr);
