@@ -40,6 +40,15 @@ struct psp_pf_dev;
 struct doca_flow_crypto_psp_spi_key_bulk;
 
 /**
+ * @brief user context struct that will be used in entries process callback
+ */
+struct entries_status {
+	bool failure;	      /* will be set to true if some entry status will not be success */
+	int nb_processed;     /* number of entries that was already processed */
+	int entries_in_queue; /* number of entries in queue that is waiting to process */
+};
+
+/**
  * @brief Implementation of the PSP_Gateway service.
  *
  * Manages the generation of PSP encryption keys, which
@@ -63,7 +72,7 @@ public:
 	 *
 	 * @param [in] psp_flows The object which manages the doca resources.
 	 */
-	PSP_GatewayImpl(psp_gw_app_config *config, PSP_GatewayFlows *psp_flows);
+	PSP_GatewayImpl(psp_gw_app_config *config, std::string pf_pci, std::string repr_indices);
 
 	/**
 	 * @brief Returns a gRPC client for a given remote host
@@ -126,13 +135,36 @@ public:
 	 */
 	size_t try_connect(std::vector<psp_gw_host> &hosts, rte_be32_t local_vf_addr);
 
+	doca_error_t init_devs();
+	doca_error_t init_flows();
+	doca_error_t init_doca_flow();
+
+	void launch_lcores(volatile bool *force_quit);
+	void kill_lcores();
+
 private:
+
+	/**
+	 * @brief Callback which is invoked to check the status of every entry
+	 *        added to a flow pipe. See doca_flow_entry_process_cb.
+	 *
+	 * @entry [in]: The entry which was added/removed/updated
+	 * @pipe_queue [in]: The index of the associated queue
+	 * @status [in]: The result of the operation
+	 * @op [in]: The type of the operation
+	 * @user_ctx [in]: The argument supplied to add_entry, etc.
+	 */
+	static void check_for_valid_entry(doca_flow_pipe_entry *entry,
+					  uint16_t pipe_queue,
+					  enum doca_flow_entry_status status,
+					  enum doca_flow_entry_op op,
+					  void *user_ctx);
 
 	// Application state data:
 	psp_gw_app_config *config{};
 
 	// Add to this when we have more than one PF
-	PSP_GatewayFlows *psp_flows{};
+	std::unique_ptr<PSP_GatewayFlows> psp_flows{};
 
 	// Used to uniquely populate the request ID in each NewTunnelRequest message.
 	uint64_t next_request_id{};

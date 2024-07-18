@@ -192,6 +192,17 @@ public:
 
 private:
 
+	/**
+	 * @brief Starts the given port (with optional dev pointer) to create
+	 *        a doca flow port.
+	 *
+	 * @port_id [in]: the numerical index of the port
+	 * @port_dev [in]: the doca_dev returned from doca_dev_open()
+	 * @port [out]: the resulting port object
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t start_port(uint16_t port_id, doca_dev *port_dev, doca_flow_port **port);
+
 	bool sampling_enabled (void) {
 		return app_config->log2_sample_rate > 0;
 	}

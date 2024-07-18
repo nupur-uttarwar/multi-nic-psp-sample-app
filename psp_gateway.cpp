@@ -143,8 +143,9 @@ int main(int argc, char **argv)
 	}
 
 	// probe devices
-	PSP_GatewayFlows psp_flows(app_config.pf_pcie_addr, app_config.pf_repr_indices, &app_config);
-	result = psp_flows.init_dev();
+	PSP_GatewayImpl psp_svc(&app_config, app_config.pf_pcie_addr, app_config.pf_repr_indices);
+
+	result = psp_svc.init_devs();
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to probe device");
 		exit_status = EXIT_FAILURE;
@@ -162,7 +163,7 @@ int main(int argc, char **argv)
 	}
 
 	// initialize static pipeline
-	result = psp_flows.init_flows();
+	result = psp_svc.init_flows();
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to initialize PSP Gateway Flows: %s", doca_error_get_descr(result));
 		exit_status = EXIT_FAILURE;
@@ -170,21 +171,7 @@ int main(int argc, char **argv)
 	}
 
 	{
-		PSP_GatewayImpl psp_svc(&app_config, &psp_flows);
-
-		struct lcore_params lcore_params = {
-			&force_quit,
-			&app_config,
-			&pf_dev,
-			&psp_flows,
-			&psp_svc,
-		};
-
-		uint32_t lcore_id;
-		RTE_LCORE_FOREACH_WORKER(lcore_id)
-		{
-			rte_eal_remote_launch(lcore_pkt_proc_func, &lcore_params, lcore_id);
-		}
+		psp_svc.launch_lcores(&force_quit);
 
 		std::string server_address = app_config.local_svc_addr;
 		if (server_address.empty()) {
@@ -230,11 +217,7 @@ int main(int argc, char **argv)
 		server_instance->Shutdown();
 		server_instance.reset();
 
-		RTE_LCORE_FOREACH_WORKER(lcore_id)
-		{
-			DOCA_LOG_INFO("Stopping L-Core %d", lcore_id);
-			rte_eal_wait_lcore(lcore_id);
-		}
+		psp_svc.kill_lcores();
 	}
 
 	// flow cleanup

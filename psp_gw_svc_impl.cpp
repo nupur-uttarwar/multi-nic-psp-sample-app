@@ -38,11 +38,10 @@
 
 DOCA_LOG_REGISTER(PSP_GW_SVC);
 
-PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, PSP_GatewayFlows *psp_flows)
-	: config(config),
-	  psp_flows(psp_flows)
+PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, std::string pf_pci, std::string repr_indices)
+	: config(config)
 {
-	return;
+	psp_flows = std::make_unique<PSP_GatewayFlows>(pf_pci, repr_indices, config);
 }
 
 doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
@@ -132,4 +131,116 @@ doca_error_t PSP_GatewayImpl::show_flow_counts(void)
 	DOCA_LOG_INFO("Created gRPC stub for remote host %s", remote_host_addr.c_str());
 
 	return stubs_iter->second.get();
+}
+
+doca_error_t PSP_GatewayImpl::init_devs(void) {
+	doca_error_t result = DOCA_SUCCESS;
+	DOCA_LOG_INFO("Initializing PSP Gateway Devices");
+
+	IF_SUCCESS(result, psp_flows->init_dev());
+
+	return result;
+}
+
+doca_error_t PSP_GatewayImpl::init_flows(void) {
+	doca_error_t result = DOCA_SUCCESS;
+	DOCA_LOG_INFO("Initializing PSP Gateway Flows");
+
+	IF_SUCCESS(result, init_doca_flow());
+	IF_SUCCESS(result, psp_flows->init_flows());
+
+	return result;
+}
+
+doca_error_t PSP_GatewayImpl::init_doca_flow(void)
+{
+	doca_error_t result = DOCA_SUCCESS;
+	uint16_t nb_queues = config->dpdk_config.port_config.nb_queues;
+
+	uint16_t rss_queues[nb_queues];
+	for (int i = 0; i < nb_queues; i++)
+		rss_queues[i] = i;
+
+	struct doca_flow_resource_rss_cfg rss_config = {};
+	rss_config.nr_queues = nb_queues;
+	rss_config.queues_array = rss_queues;
+
+	/* init doca flow with crypto shared resources */
+	struct doca_flow_cfg *flow_cfg;
+	IF_SUCCESS(result, doca_flow_cfg_create(&flow_cfg));
+	IF_SUCCESS(result, doca_flow_cfg_set_pipe_queues(flow_cfg, nb_queues));
+	IF_SUCCESS(result, doca_flow_cfg_set_nr_counters(flow_cfg, config->max_tunnels * NUM_OF_PSP_SYNDROMES + 10));
+	IF_SUCCESS(result, doca_flow_cfg_set_mode_args(flow_cfg, "switch,hws,isolated,expert"));
+	IF_SUCCESS(result, doca_flow_cfg_set_cb_entry_process(flow_cfg, PSP_GatewayImpl::check_for_valid_entry));
+	IF_SUCCESS(result, doca_flow_cfg_set_default_rss(flow_cfg, &rss_config));
+	IF_SUCCESS(result,
+		   doca_flow_cfg_set_nr_shared_resource(flow_cfg,
+							config->max_tunnels + 1,
+							DOCA_FLOW_SHARED_RESOURCE_PSP));
+	IF_SUCCESS(result, doca_flow_cfg_set_nr_shared_resource(flow_cfg, 4, DOCA_FLOW_SHARED_RESOURCE_MIRROR));
+	IF_SUCCESS(result, doca_flow_init(flow_cfg));
+
+	if (result == DOCA_SUCCESS)
+		DOCA_LOG_INFO("Initialized DOCA Flow for a max of %d tunnels", config->max_tunnels);
+
+	if (flow_cfg)
+		doca_flow_cfg_destroy(flow_cfg);
+	return result;
+}
+
+void PSP_GatewayImpl::launch_lcores(volatile bool *force_quit) {
+	struct lcore_params lcore_params = {
+		force_quit,
+		config,
+		0,
+		this,
+	};
+
+	uint32_t lcore_id;
+	RTE_LCORE_FOREACH_WORKER(lcore_id)
+	{
+		rte_eal_remote_launch(lcore_pkt_proc_func, &lcore_params, lcore_id);
+	}
+
+}
+
+void PSP_GatewayImpl::kill_lcores() {
+	uint32_t lcore_id;
+
+	RTE_LCORE_FOREACH_WORKER(lcore_id)
+	{
+		DOCA_LOG_INFO("Stopping L-Core %d", lcore_id);
+		rte_eal_wait_lcore(lcore_id);
+	}
+}
+
+/*
+ * Entry processing callback
+ *
+ * @entry [in]: entry pointer
+ * @pipe_queue [in]: queue identifier
+ * @status [in]: DOCA Flow entry status
+ * @op [in]: DOCA Flow entry operation
+ * @user_ctx [out]: user context
+ */
+void PSP_GatewayImpl::check_for_valid_entry(doca_flow_pipe_entry *entry,
+					     uint16_t pipe_queue,
+					     enum doca_flow_entry_status status,
+					     enum doca_flow_entry_op op,
+					     void *user_ctx)
+{
+	(void)entry;
+	(void)op;
+	(void)pipe_queue;
+
+	auto *entry_status = (entries_status *)user_ctx;
+
+	if (entry_status == NULL || op != DOCA_FLOW_ENTRY_OP_ADD)
+		return;
+
+	if (status != DOCA_FLOW_ENTRY_STATUS_SUCCESS)
+		entry_status->failure = true; /* set failure to true if processing failed */
+
+	entry_status->nb_processed++;
+	entry_status->entries_in_queue--;
 }

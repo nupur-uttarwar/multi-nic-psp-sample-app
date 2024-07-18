@@ -32,6 +32,17 @@
 #include <rte_ether.h>
 #include <rte_byteorder.h>
 
+#define IF_SUCCESS(result, expr) \
+	if (result == DOCA_SUCCESS) { \
+		result = expr; \
+		if (likely(result == DOCA_SUCCESS)) { \
+			DOCA_LOG_DBG("Success: %s", #expr); \
+		} else { \
+			DOCA_LOG_ERR("Error: %s: %s", #expr, doca_error_get_descr(result)); \
+		} \
+	} else { /* skip this expr */ \
+	}
+
 /**
  * @brief Converts an IPv4 address to a C++ string
  */

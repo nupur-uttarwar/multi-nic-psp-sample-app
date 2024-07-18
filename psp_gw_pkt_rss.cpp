@@ -102,16 +102,15 @@ int lcore_pkt_proc_func(void *lcore_args)
 	DOCA_LOG_INFO("L-Core %d polling queue %d (all ports)", lcore_id, queue_id);
 
 	while (!*params->force_quit) {
-		uint16_t port_id = params->pf_dev->pf_port_id;
 		uint64_t t_start = rte_rdtsc();
 
-		uint16_t nb_rx_packets = rte_eth_rx_burst(port_id, queue_id, rx_packets, MAX_RX_BURST_SIZE);
+		uint16_t nb_rx_packets = rte_eth_rx_burst(params->pf_port_id, queue_id, rx_packets, MAX_RX_BURST_SIZE);
 
 		if (!nb_rx_packets)
 			continue;
 
 		for (int i = 0; i < nb_rx_packets && !*params->force_quit; i++) {
-			handle_packet(params, port_id, queue_id, rx_packets[i]);
+			handle_packet(params, params->pf_port_id, queue_id, rx_packets[i]);
 		}
 
 		rte_pktmbuf_free_bulk(rx_packets, nb_rx_packets);
@@ -120,7 +119,7 @@ int lcore_pkt_proc_func(void *lcore_args)
 			double sec = (double)(rte_rdtsc() - t_start) * tsc_to_seconds;
 			DOCA_LOG_INFO("L-Core %d port %d: processed %d packets in %f seconds",
 				      lcore_id,
-				      port_id,
+				      params->pf_port_id,
 				      nb_rx_packets,
 				      sec);
 		}

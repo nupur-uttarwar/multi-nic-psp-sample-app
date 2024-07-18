@@ -40,30 +40,11 @@
 #include "psp_gw_flows.h"
 #include "psp_gw_utils.h"
 
-#define IF_SUCCESS(result, expr) \
-	if (result == DOCA_SUCCESS) { \
-		result = expr; \
-		if (likely(result == DOCA_SUCCESS)) { \
-			DOCA_LOG_DBG("Success: %s", #expr); \
-		} else { \
-			DOCA_LOG_ERR("Error: %s: %s", #expr, doca_error_get_descr(result)); \
-		} \
-	} else { /* skip this expr */ \
-	}
-
 DOCA_LOG_REGISTER(PSP_GATEWAY);
 
 static const uint32_t DEFAULT_TIMEOUT_US = 10000; /* default timeout for processing entries */
 static const uint32_t PSP_ICV_SIZE = 16;
 
-/**
- * @brief user context struct that will be used in entries process callback
- */
-struct entries_status {
-	bool failure;	      /* will be set to true if some entry status will not be success */
-	int nb_processed;     /* number of entries that was already processed */
-	int entries_in_queue; /* number of entries in queue that is waiting to process */
-};
 
 /**
  * @brief packet header structure to simplify populating the encap_data array for encap ipv6 data
@@ -175,7 +156,7 @@ doca_error_t PSP_GatewayFlows::init_flows(void)
 {
 	doca_error_t result = DOCA_SUCCESS;
 
-	DOCA_LOG_INFO("Initializing PSP Gateway Flows");
+	DOCA_LOG_INFO("Initializing PSP Gateway Flows on port %d", pf_dev.pf_port_id);
 
 	return result;
 }
@@ -246,3 +227,28 @@ std::vector<doca_error_t> PSP_GatewayFlows::set_egress_paths(
 
 	return result;
 }
+
+doca_error_t PSP_GatewayFlows::start_port(uint16_t port_id, doca_dev *port_dev, doca_flow_port **port)
+{
+	doca_flow_port_cfg *port_cfg;
+	doca_error_t result = DOCA_SUCCESS;
+
+	IF_SUCCESS(result, doca_flow_port_cfg_create(&port_cfg));
+
+	std::string port_id_str = std::to_string(port_id); // note that set_devargs() clones the string contents
+	IF_SUCCESS(result, doca_flow_port_cfg_set_devargs(port_cfg, port_id_str.c_str()));
+	IF_SUCCESS(result, doca_flow_port_cfg_set_dev(port_cfg, port_dev));
+	IF_SUCCESS(result, doca_flow_port_start(port_cfg, port));
+
+	if (result == DOCA_SUCCESS) {
+		rte_ether_addr port_mac_addr;
+		rte_eth_macaddr_get(port_id, &port_mac_addr);
+		DOCA_LOG_INFO("Started port_id %d, mac-addr: %s", port_id, mac_to_string(port_mac_addr).c_str());
+	}
+
+	if (port_cfg) {
+		doca_flow_port_cfg_destroy(port_cfg);
+	}
+	return result;
+}
+
