@@ -44,15 +44,21 @@ struct psp_gw_app_config;
  * @brief Maintains the state of the host PF
  */
 struct psp_pf_dev {
-	doca_dev *dev;
-	uint16_t port_id;
-	doca_flow_port *port_obj;
+	struct doca_dev *dev;
 
-	rte_ether_addr src_mac;
-	std::string src_mac_str;
+	uint16_t pf_port_id;
+	struct doca_flow_port *pf_port;
+	struct rte_ether_addr pf_mac;
+	std::string pf_mac_str;
 
-	struct doca_flow_ip_addr src_pip; // Physical/Outer IP addr
-	std::string src_pip_str;
+	uint16_t vf_port_id;
+	struct doca_flow_port *vf_port;
+	struct rte_ether_addr vf_mac;
+	std::string vf_mac_str;
+
+	struct doca_flow_ip_addr local_pip; // Physical/Outer IP addr
+	std::string local_pip_str;
+
 };
 
 struct psp_session_desc_t {
@@ -104,9 +110,10 @@ public:
 	/**
 	 * @brief Constructs the object. This operation cannot fail.
 	 * @param [in] pf_pci The PCI address of the PF device
+	 * @param [in] pf_repr_indices The indices of the PF device representors
 	 * @param [in] app_config The application configuration
 	 */
-	PSP_GatewayFlows(std::string pf_pci, psp_gw_app_config *app_config);
+	PSP_GatewayFlows(std::string pf_pci, std::string pf_repr_indices, psp_gw_app_config *app_config);
 
 	/**
 	 * Deallocates all associated DOCA objects.
@@ -115,11 +122,18 @@ public:
 	virtual ~PSP_GatewayFlows(void);
 
 	/**
+	 * @brief Probes the PF device and its representors.
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t init_dev(void);
+
+	/**
 	 * @brief Initialized the DOCA resources.
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	doca_error_t init(void);
+	doca_error_t init_flows(void);
 
 	/**
 	 * @brief Rotate the master key.
@@ -182,12 +196,14 @@ private:
 		return app_config->log2_sample_rate > 0;
 	}
 
-	// Application state data:
+	// Input during init
 	psp_gw_app_config *app_config{};
 	std::string pf_pci;
-	psp_pf_dev *pf_dev{};
-	uint16_t vf_port_id{UINT16_MAX};
-	struct doca_flow_port *vf_port{};
+	std::string pf_repr_indices;
+
+	// Queried state during init
+	psp_pf_dev pf_dev{};
+
 
 	struct doca_flow_monitor monitor_count{};
 };

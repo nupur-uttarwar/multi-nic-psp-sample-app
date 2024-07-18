@@ -103,7 +103,6 @@ int main(int argc, char **argv)
 	app_config.outer = DOCA_FLOW_L3_TYPE_IP6;
 
 	struct psp_pf_dev pf_dev = {};
-	uint16_t vf_port_id;
 	std::string dev_probe_str;
 
 	struct doca_log_backend *sdk_log;
@@ -143,66 +142,16 @@ int main(int argc, char **argv)
 		DOCA_LOG_INFO("Selected psp_ver %d", app_config.net_config.default_psp_proto_ver);
 	}
 
-	// init devices
-	result = open_doca_device_with_pci(app_config.pf_pcie_addr.c_str(), nullptr, &pf_dev.dev);
+	// probe devices
+	PSP_GatewayFlows psp_flows(app_config.pf_pcie_addr, app_config.pf_repr_indices, &app_config);
+	result = psp_flows.init_dev();
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to open device %s: %s",
-			     app_config.pf_pcie_addr.c_str(),
-			     doca_error_get_descr(result));
-		doca_argp_destroy();
-		return EXIT_FAILURE;
+		DOCA_LOG_ERR("Failed to probe device");
+		exit_status = EXIT_FAILURE;
+		goto dpdk_destroy;
 	}
-
-	dev_probe_str = std::string("dv_flow_en=2,"	 // hardware steering
-				    "dv_xmeta_en=4,"	 // extended flow metadata support
-				    "fdb_def_rule_en=0," // disable default root flow table rule
-				    "vport_match=1,"
-				    "repr_matching_en=0,"
-				    "representor=") +
-			app_config.pf_repr_indices; // indicate which representors to probe
-
-	result = doca_dpdk_port_probe(pf_dev.dev, dev_probe_str.c_str());
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to probe dpdk port for secured port: %s", doca_error_get_descr(result));
-		return result;
-	}
-	DOCA_LOG_INFO("Probed %s,%s", app_config.pf_pcie_addr.c_str(), dev_probe_str.c_str());
-
-	pf_dev.port_id = 0;
 
 	app_config.dpdk_config.port_config.nb_ports = rte_eth_dev_count_avail();
-
-	rte_eth_macaddr_get(pf_dev.port_id, &pf_dev.src_mac);
-	pf_dev.src_mac_str = mac_to_string(pf_dev.src_mac);
-
-	if (app_config.outer == DOCA_FLOW_L3_TYPE_IP4) {
-		pf_dev.src_pip.type = DOCA_FLOW_L3_TYPE_IP4;
-		result = doca_devinfo_get_ipv4_addr(doca_dev_as_devinfo(pf_dev.dev),
-						    (uint8_t *)&pf_dev.src_pip.ipv4_addr,
-						    DOCA_DEVINFO_IPV4_ADDR_SIZE);
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to find IPv4 addr for PF: %s", doca_error_get_descr(result));
-			return result;
-		}
-		pf_dev.src_pip_str = ipv4_to_string(pf_dev.src_pip.ipv4_addr);
-	} else {
-		result = doca_devinfo_get_ipv6_addr(doca_dev_as_devinfo(pf_dev.dev),
-						    (uint8_t *)pf_dev.src_pip.ipv6_addr,
-						    DOCA_DEVINFO_IPV6_ADDR_SIZE);
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to find IPv6 addr for PF: %s", doca_error_get_descr(result));
-			return result;
-		}
-		pf_dev.src_pip_str = ipv6_to_string(pf_dev.src_pip.ipv6_addr);
-	}
-
-	DOCA_LOG_INFO("Port %d: Detected PF mac addr: %s, IP addr: %s, total ports: %d",
-		      pf_dev.port_id,
-		      pf_dev.src_mac_str.c_str(),
-		      pf_dev.src_pip_str.c_str(),
-		      app_config.dpdk_config.port_config.nb_ports);
-
-	vf_port_id = pf_dev.port_id + 1;
 
 	// Update queues and ports
 	result = dpdk_queues_and_ports_init(&app_config.dpdk_config);
@@ -212,16 +161,15 @@ int main(int argc, char **argv)
 		goto dpdk_destroy;
 	}
 
+	// initialize static pipeline
+	result = psp_flows.init_flows();
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to initialize PSP Gateway Flows: %s", doca_error_get_descr(result));
+		exit_status = EXIT_FAILURE;
+		goto dpdk_destroy;
+	}
+
 	{
-		PSP_GatewayFlows psp_flows(app_config.pf_pcie_addr, &app_config);
-
-		result = psp_flows.init();
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to create flow pipes");
-			exit_status = EXIT_FAILURE;
-			goto dpdk_destroy;
-		}
-
 		PSP_GatewayImpl psp_svc(&app_config, &psp_flows);
 
 		struct lcore_params lcore_params = {

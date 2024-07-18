@@ -28,9 +28,12 @@
 
 #include <doca_flow.h>
 #include <doca_flow_crypto.h>
+#include <doca_dev.h>
 #include <doca_log.h>
+#include <doca_dpdk.h>
 #include <rte_ether.h>
 #include <rte_ethdev.h>
+#include <samples/common.h>
 #include <rte_ip.h>
 
 #include "psp_gw_config.h"
@@ -100,9 +103,10 @@ struct eth_ipv4_psp_tunnel_hdr {
 
 const uint8_t PSP_SAMPLE_ENABLE = 1 << 7;
 
-PSP_GatewayFlows::PSP_GatewayFlows(std::string pf_pci, psp_gw_app_config *app_config)
+PSP_GatewayFlows::PSP_GatewayFlows(std::string pf_pci, std::string pf_repr_indices, psp_gw_app_config *app_config)
 	: app_config(app_config),
-	  pf_pci(pf_pci)
+	  pf_pci(pf_pci),
+	  pf_repr_indices(pf_repr_indices)
 {
 	monitor_count.counter_type = DOCA_FLOW_RESOURCE_TYPE_NON_SHARED;
 }
@@ -112,7 +116,62 @@ PSP_GatewayFlows::~PSP_GatewayFlows()
 	DOCA_LOG_INFO("Destroying PSP Gateway Flows");
 }
 
-doca_error_t PSP_GatewayFlows::init(void)
+doca_error_t PSP_GatewayFlows::init_dev(void)
+{
+	doca_error_t result = DOCA_SUCCESS;
+
+	std::string dev_probe_str = std::string("dv_flow_en=2,"	 // hardware steering
+		"dv_xmeta_en=4,"	 // extended flow metadata support
+		"fdb_def_rule_en=0," // disable default root flow table rule
+		"vport_match=1,"
+		"repr_matching_en=0,"
+		"representor=") +
+		pf_repr_indices; // indicate which representors to probe
+
+	IF_SUCCESS(result, open_doca_device_with_pci(pf_pci.c_str(), nullptr, &pf_dev.dev));
+	IF_SUCCESS(result, doca_dpdk_port_probe(pf_dev.dev, dev_probe_str.c_str()));
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to probe device %s: %s", pf_pci.c_str(), doca_error_get_descr(result));
+		return result;
+	}
+
+	pf_dev.pf_port_id = 0;
+	pf_dev.vf_port_id = pf_dev.pf_port_id + 1;
+
+	rte_eth_macaddr_get(pf_dev.pf_port_id, &pf_dev.pf_mac);
+	pf_dev.pf_mac_str = mac_to_string(pf_dev.pf_mac);
+
+	rte_eth_macaddr_get(pf_dev.vf_port_id, &pf_dev.vf_mac);
+	pf_dev.vf_mac_str = mac_to_string(pf_dev.vf_mac);
+
+	if (app_config->outer == DOCA_FLOW_L3_TYPE_IP4) {
+		pf_dev.local_pip.type = DOCA_FLOW_L3_TYPE_IP4;
+		result = doca_devinfo_get_ipv4_addr(doca_dev_as_devinfo(pf_dev.dev),
+						    (uint8_t *)&pf_dev.local_pip.ipv4_addr,
+						    DOCA_DEVINFO_IPV4_ADDR_SIZE);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to find IPv4 addr for PF: %s", doca_error_get_descr(result));
+			return result;
+		}
+		pf_dev.local_pip_str = ipv4_to_string(pf_dev.local_pip.ipv4_addr);
+	} else {
+		pf_dev.local_pip.type = DOCA_FLOW_L3_TYPE_IP6;
+		result = doca_devinfo_get_ipv6_addr(doca_dev_as_devinfo(pf_dev.dev),
+						    (uint8_t *)pf_dev.local_pip.ipv6_addr,
+						    DOCA_DEVINFO_IPV6_ADDR_SIZE);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to find IPv6 addr for PF: %s", doca_error_get_descr(result));
+			return result;
+		}
+		pf_dev.local_pip_str = ipv6_to_string(pf_dev.local_pip.ipv6_addr);
+	}
+
+	DOCA_LOG_INFO("Probed PF %s, VF %s on PCI %s", pf_dev.pf_mac_str.c_str(), pf_dev.vf_mac_str.c_str(), pf_pci.c_str());
+
+	return result;
+}
+
+doca_error_t PSP_GatewayFlows::init_flows(void)
 {
 	doca_error_t result = DOCA_SUCCESS;
 

@@ -102,7 +102,7 @@ int lcore_pkt_proc_func(void *lcore_args)
 	DOCA_LOG_INFO("L-Core %d polling queue %d (all ports)", lcore_id, queue_id);
 
 	while (!*params->force_quit) {
-		uint16_t port_id = params->pf_dev->port_id;
+		uint16_t port_id = params->pf_dev->pf_port_id;
 		uint64_t t_start = rte_rdtsc();
 
 		uint16_t nb_rx_packets = rte_eth_rx_burst(port_id, queue_id, rx_packets, MAX_RX_BURST_SIZE);
