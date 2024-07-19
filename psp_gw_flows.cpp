@@ -158,7 +158,10 @@ doca_error_t PSP_GatewayFlows::init_flows(void)
 
 	IF_SUCCESS(result, start_port(pf_dev.pf_port_id, pf_dev.dev, &pf_dev.pf_port));
 	IF_SUCCESS(result, start_port(pf_dev.vf_port_id, nullptr, &pf_dev.vf_port));
-
+	IF_SUCCESS(result, bind_shared_resources());
+	IF_SUCCESS(result, rss_pipe_create());
+	IF_SUCCESS(result, configure_mirrors());
+	IF_SUCCESS(result, create_pipes());
 
 	return result;
 }
@@ -230,6 +233,69 @@ std::vector<doca_error_t> PSP_GatewayFlows::set_egress_paths(
 	return result;
 }
 
+doca_error_t PSP_GatewayFlows::configure_mirrors(void)
+{
+	assert(rss_pipe);
+	doca_error_t result = DOCA_SUCCESS;
+
+	struct doca_flow_mirror_target mirr_tgt = {};
+	mirr_tgt.fwd.type = DOCA_FLOW_FWD_PIPE;
+	mirr_tgt.fwd.next_pipe = rss_pipe;
+
+	struct doca_flow_shared_resource_cfg res_cfg = {};
+	res_cfg.domain = DOCA_FLOW_PIPE_DOMAIN_EGRESS;
+	res_cfg.mirror_cfg.nr_targets = 1;
+	res_cfg.mirror_cfg.target = &mirr_tgt;
+
+	IF_SUCCESS(result,
+		   doca_flow_shared_resource_set_cfg(DOCA_FLOW_SHARED_RESOURCE_MIRROR, mirror_res_id, &res_cfg));
+
+	IF_SUCCESS(
+		result,
+		doca_flow_shared_resources_bind(DOCA_FLOW_SHARED_RESOURCE_MIRROR, &mirror_res_id, 1, pf_dev.pf_port));
+
+	doca_flow_mirror_target mirr_tgt_port = {};
+	mirr_tgt_port.fwd.type = DOCA_FLOW_FWD_PORT;
+	mirr_tgt_port.fwd.port_id = pf_dev.pf_port_id;
+
+	res_cfg.mirror_cfg.target = &mirr_tgt_port;
+
+	IF_SUCCESS(result,
+		   doca_flow_shared_resource_set_cfg(DOCA_FLOW_SHARED_RESOURCE_MIRROR, mirror_res_id_port, &res_cfg));
+	IF_SUCCESS(result,
+		   doca_flow_shared_resources_bind(DOCA_FLOW_SHARED_RESOURCE_MIRROR,
+						   &mirror_res_id_port,
+						   1,
+						   pf_dev.pf_port));
+
+	return result;
+}
+
+doca_error_t PSP_GatewayFlows::create_pipes(void)
+{
+	doca_error_t result = DOCA_SUCCESS;
+
+	IF_SUCCESS(result, syndrome_stats_pipe_create());
+	IF_SUCCESS(result, ingress_acl_pipe_create());
+
+	// if (sampling_enabled()) {
+	// 	IF_SUCCESS(result, ingress_sampling_pipe_create());
+	// }
+
+	// IF_SUCCESS(result, ingress_decrypt_pipe_create());
+
+	// if (sampling_enabled()) {
+	// 	IF_SUCCESS(result, empty_pipe_create_not_sampled());
+	// 	IF_SUCCESS(result, egress_sampling_pipe_create());
+	// }
+	// IF_SUCCESS(result, egress_acl_pipe_create());
+	// IF_SUCCESS(result, empty_pipe_create(egress_acl_pipe));
+
+	// IF_SUCCESS(result, ingress_root_pipe_create());
+
+	return result;
+}
+
 doca_error_t PSP_GatewayFlows::start_port(uint16_t port_id, doca_dev *port_dev, doca_flow_port **port)
 {
 	doca_flow_port_cfg *port_cfg;
@@ -253,3 +319,203 @@ doca_error_t PSP_GatewayFlows::start_port(uint16_t port_id, doca_dev *port_dev, 
 	return result;
 }
 
+doca_error_t PSP_GatewayFlows::bind_shared_resources(void)
+{
+	doca_error_t result = DOCA_SUCCESS;
+
+	std::vector<uint32_t> psp_ids(app_config->max_tunnels);
+	for (uint32_t i = 0; i < app_config->max_tunnels; i++) {
+		psp_ids[i] = i + 1;
+	}
+
+	IF_SUCCESS(result,
+		   doca_flow_shared_resources_bind(DOCA_FLOW_SHARED_RESOURCE_PSP,
+						   psp_ids.data(),
+						   app_config->max_tunnels,
+						   pf_dev.pf_port));
+
+	return result;
+}
+
+doca_error_t PSP_GatewayFlows::add_single_entry(uint16_t pipe_queue,
+						doca_flow_pipe *pipe,
+						doca_flow_port *port,
+						const doca_flow_match *match,
+						const doca_flow_actions *actions,
+						const doca_flow_monitor *mon,
+						const doca_flow_fwd *fwd,
+						doca_flow_pipe_entry **entry)
+{
+	int num_of_entries = 1;
+	uint32_t flags = DOCA_FLOW_NO_WAIT;
+
+	struct entries_status status = {};
+	status.entries_in_queue = num_of_entries;
+
+	doca_error_t result =
+		doca_flow_pipe_add_entry(pipe_queue, pipe, match, actions, mon, fwd, flags, &status, entry);
+
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to add entry: %s", doca_error_get_descr(result));
+		return result;
+	}
+
+	result = doca_flow_entries_process(port, 0, DEFAULT_TIMEOUT_US, num_of_entries);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to process entry: %s", doca_error_get_descr(result));
+		return result;
+	}
+
+	if (status.nb_processed != num_of_entries || status.failure) {
+		DOCA_LOG_ERR("Failed to process entry; nb_processed = %d, failure = %d",
+			     status.nb_processed,
+			     status.failure);
+		return DOCA_ERROR_BAD_STATE;
+	}
+
+	return result;
+}
+
+doca_error_t PSP_GatewayFlows::rss_pipe_create(void)
+{
+	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
+	doca_error_t result = DOCA_SUCCESS;
+
+	struct doca_flow_match empty_match = {};
+
+	// Note packets sent to RSS will be processed by lcore_pkt_proc_func().
+	uint16_t rss_queues[1] = {0};
+	struct doca_flow_fwd fwd = {};
+	fwd.type = DOCA_FLOW_FWD_RSS;
+	fwd.rss_outer_flags = DOCA_FLOW_RSS_IPV4 | DOCA_FLOW_RSS_IPV6;
+	fwd.num_of_queues = 1;
+	fwd.rss_queues = rss_queues;
+
+	struct doca_flow_pipe_cfg *pipe_cfg;
+	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev.pf_port));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_name(pipe_cfg, "RSS_PIPE"));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, 1));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_monitor(pipe_cfg, &monitor_count));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &empty_match, nullptr));
+	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd, nullptr, &rss_pipe));
+	IF_SUCCESS(
+		result,
+		add_single_entry(0, rss_pipe, pf_dev.pf_port, nullptr, nullptr, nullptr, nullptr, &default_rss_entry));
+
+	if (pipe_cfg)
+		doca_flow_pipe_cfg_destroy(pipe_cfg);
+
+	return result;
+}
+
+doca_error_t PSP_GatewayFlows::syndrome_stats_pipe_create(void)
+{
+	doca_error_t result = DOCA_SUCCESS;
+
+	struct doca_flow_match syndrome_match = {};
+	syndrome_match.parser_meta.psp_syndrome = 0xff;
+
+	// If we got here, the packet failed either the PSP decryption syndrome check
+	// or the ACL check. Whether the syndrome bits match here or not, the
+	// fate of the packet is to drop.
+	struct doca_flow_fwd fwd_drop = {};
+	fwd_drop.type = DOCA_FLOW_FWD_DROP;
+
+	struct doca_flow_pipe_cfg *pipe_cfg;
+	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev.pf_port));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_name(pipe_cfg, "SYNDROME_STATS"));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_domain(pipe_cfg, DOCA_FLOW_PIPE_DOMAIN_SECURE_INGRESS));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, NUM_OF_PSP_SYNDROMES));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_dir_info(pipe_cfg, DOCA_FLOW_DIRECTION_NETWORK_TO_HOST));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_miss_counter(pipe_cfg, true));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &syndrome_match, nullptr));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_monitor(pipe_cfg, &monitor_count));
+	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd_drop, &fwd_drop, &syndrome_stats_pipe));
+
+	if (pipe_cfg) {
+		doca_flow_pipe_cfg_destroy(pipe_cfg);
+	}
+
+	for (int i = 0; i < NUM_OF_PSP_SYNDROMES; i++) {
+		syndrome_match.parser_meta.psp_syndrome = 1 << i;
+		IF_SUCCESS(result,
+			   add_single_entry(0,
+					    syndrome_stats_pipe,
+					    pf_dev.pf_port,
+					    &syndrome_match,
+					    nullptr,
+					    &monitor_count,
+					    nullptr,
+					    &syndrome_stats_entries[i]));
+	}
+
+	return result;
+}
+
+doca_error_t PSP_GatewayFlows::ingress_acl_pipe_create(void)
+{
+	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
+	doca_error_t result = DOCA_SUCCESS;
+	struct doca_flow_match match = {};
+	match.parser_meta.psp_syndrome = UINT8_MAX;
+	if (!app_config->disable_ingress_acl) {
+		match.tun.type = DOCA_FLOW_TUN_PSP;
+		match.tun.psp.spi = UINT32_MAX;
+		match.inner.l3_type = DOCA_FLOW_L3_TYPE_IP4;
+		match.inner.ip4.src_ip = UINT32_MAX;
+	}
+
+	struct doca_flow_actions actions = {};
+	actions.has_crypto_encap = true;
+	actions.crypto_encap.action_type = DOCA_FLOW_CRYPTO_REFORMAT_DECAP;
+	actions.crypto_encap.net_type = DOCA_FLOW_CRYPTO_HEADER_PSP_TUNNEL;
+	actions.crypto_encap.icv_size = PSP_ICV_SIZE;
+	actions.crypto_encap.data_size = sizeof(rte_ether_hdr);
+
+	struct rte_ether_hdr *eth_hdr = (rte_ether_hdr *)actions.crypto_encap.encap_data;
+	eth_hdr->ether_type = RTE_BE16(RTE_ETHER_TYPE_IPV4);
+	eth_hdr->src_addr = pf_dev.pf_mac;
+	eth_hdr->dst_addr = app_config->dcap_dmac;
+
+	doca_flow_actions *actions_arr[] = {&actions};
+
+	struct doca_flow_fwd fwd = {};
+	fwd.type = DOCA_FLOW_FWD_PORT;
+	fwd.port_id = pf_dev.vf_port_id;
+
+	struct doca_flow_fwd fwd_miss = {};
+	fwd_miss.type = DOCA_FLOW_FWD_PIPE;
+	fwd_miss.next_pipe = syndrome_stats_pipe;
+
+	int nr_entries = app_config->disable_ingress_acl ? 1 : app_config->max_tunnels;
+
+	struct doca_flow_pipe_cfg *pipe_cfg;
+	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev.pf_port));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_name(pipe_cfg, "INGR_ACL"));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_miss_counter(pipe_cfg, true));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, nr_entries));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_dir_info(pipe_cfg, DOCA_FLOW_DIRECTION_NETWORK_TO_HOST));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_actions(pipe_cfg, actions_arr, nullptr, nullptr, 1));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_monitor(pipe_cfg, &monitor_count));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &match, nullptr));
+	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd, &fwd_miss, &ingress_acl_pipe));
+
+	if (pipe_cfg) {
+		doca_flow_pipe_cfg_destroy(pipe_cfg);
+	}
+
+	if (app_config->disable_ingress_acl) {
+		doca_flow_match match_no_syndrome = {};
+		IF_SUCCESS(result,
+			   add_single_entry(0,
+					    ingress_acl_pipe,
+					    pf_dev.pf_port,
+					    &match_no_syndrome,
+					    &actions,
+					    nullptr,
+					    nullptr,
+					    &default_ingr_acl_entry));
+	}
+
+	return result;
+}

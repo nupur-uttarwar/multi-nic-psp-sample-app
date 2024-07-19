@@ -188,20 +188,20 @@ doca_error_t PSP_GatewayImpl::init_doca_flow(void)
 }
 
 void PSP_GatewayImpl::launch_lcores(volatile bool *force_quit) {
-	struct lcore_params lcore_params = {
-		force_quit,
-		config,
-		0,
-		this,
-	};
-	lcore_params_list.push_back(lcore_params);
-
 	uint32_t lcore_id;
+
 	RTE_LCORE_FOREACH_WORKER(lcore_id)
 	{
+		struct lcore_params lcore_params = {
+			force_quit,
+			config,
+			0, // pf port id
+			this,
+		};
+
+		lcore_params_list.push_back(lcore_params);
 		rte_eal_remote_launch(lcore_pkt_proc_func, &lcore_params_list.back(), lcore_id);
 	}
-
 }
 
 void PSP_GatewayImpl::kill_lcores() {
@@ -212,6 +212,8 @@ void PSP_GatewayImpl::kill_lcores() {
 		DOCA_LOG_INFO("Stopping L-Core %d", lcore_id);
 		rte_eal_wait_lcore(lcore_id);
 	}
+
+	lcore_params_list.clear();
 }
 
 /*

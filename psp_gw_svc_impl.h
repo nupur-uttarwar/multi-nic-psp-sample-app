@@ -40,15 +40,6 @@ struct psp_pf_dev;
 struct doca_flow_crypto_psp_spi_key_bulk;
 
 /**
- * @brief user context struct that will be used in entries process callback
- */
-struct entries_status {
-	bool failure;	      /* will be set to true if some entry status will not be success */
-	int nb_processed;     /* number of entries that was already processed */
-	int entries_in_queue; /* number of entries in queue that is waiting to process */
-};
-
-/**
  * @brief Implementation of the PSP_Gateway service.
  *
  * Manages the generation of PSP encryption keys, which

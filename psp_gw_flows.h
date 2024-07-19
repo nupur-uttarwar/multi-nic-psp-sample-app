@@ -41,6 +41,15 @@ static const int NUM_OF_PSP_SYNDROMES = 4; // None, ICV Fail, Bad Trailer
 struct psp_gw_app_config;
 
 /**
+ * @brief user context struct that will be used in entries process callback
+ */
+struct entries_status {
+	bool failure;	      /* will be set to true if some entry status will not be success */
+	int nb_processed;     /* number of entries that was already processed */
+	int entries_in_queue; /* number of entries in queue that is waiting to process */
+};
+
+/**
  * @brief Maintains the state of the host PF
  */
 struct psp_pf_dev {
@@ -203,6 +212,73 @@ private:
 	 */
 	doca_error_t start_port(uint16_t port_id, doca_dev *port_dev, doca_flow_port **port);
 
+	/**
+	 * @brief handles the binding of the shared resources to ports
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t bind_shared_resources(void);
+
+	/**
+	 * @brief wrapper for doca_flow_pipe_add_entry()
+	 * Handles the call to process_entry and its callback for a single entry.
+	 *
+	 * @pipe_queue [in]: the queue index associated with the caller cpu core
+	 * @pipe [in]: the pipe on which to add the entry
+	 * @port [in]: the port which owns the pipe
+	 * @match [in]: packet match criteria
+	 * @actions [in]: packet mod actions
+	 * @mon [in]: packet monitoring actions
+	 * @fwd [in]: packet forwarding actions
+	 * @entry [out]: the newly created flow entry
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t add_single_entry(uint16_t pipe_queue,
+				      doca_flow_pipe *pipe,
+				      doca_flow_port *port,
+				      const doca_flow_match *match,
+				      const doca_flow_actions *actions,
+				      const doca_flow_monitor *mon,
+				      const doca_flow_fwd *fwd,
+				      doca_flow_pipe_entry **entry);
+
+	/**
+	 * Creates the entry point to the CPU Rx queues
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t rss_pipe_create(void);
+
+	/**
+	 * Creates the pipe which counts the various syndrome types
+	 * and drops the packets
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t syndrome_stats_pipe_create(void);
+
+	/**
+	 * Top-level pipe creation method
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t create_pipes(void);
+
+	/**
+	 * @brief handles the setup of the packet mirroring shared resources
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t configure_mirrors(void);
+
+	/**
+	 * Creates the pipe to only accept incoming packets from
+	 * appropriate sources.
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t ingress_acl_pipe_create(void);
+
 	bool sampling_enabled (void) {
 		return app_config->log2_sample_rate > 0;
 	}
@@ -215,8 +291,42 @@ private:
 	// Queried state during init
 	psp_pf_dev pf_dev{};
 
+	// general pipes
+	struct doca_flow_pipe *rss_pipe{};
+	struct doca_flow_pipe *ingress_root_pipe{};
+
+	// net-to-host pipes
+	struct doca_flow_pipe *ingress_decrypt_pipe{};
+	struct doca_flow_pipe *ingress_sampling_pipe{};
+	struct doca_flow_pipe *ingress_acl_pipe{};
+
+	// host-to-net pipes
+	struct doca_flow_pipe *egress_acl_pipe{};
+	struct doca_flow_pipe *egress_sampling_pipe{};
+	struct doca_flow_pipe *egress_encrypt_pipe{};
+	struct doca_flow_pipe *syndrome_stats_pipe{};
+	struct doca_flow_pipe *empty_pipe{};
+	struct doca_flow_pipe *empty_pipe_not_sampled{};
+
+	// static pipe entries
+	struct doca_flow_pipe_entry *default_rss_entry{};
+	struct doca_flow_pipe_entry *default_decrypt_entry{};
+	struct doca_flow_pipe_entry *default_ingr_sampling_entry{};
+	struct doca_flow_pipe_entry *default_ingr_acl_entry{};
+	struct doca_flow_pipe_entry *default_egr_sampling_entry{};
+	struct doca_flow_pipe_entry *root_jump_to_ingress_ipv6_entry{};
+	struct doca_flow_pipe_entry *root_jump_to_ingress_ipv4_entry{};
+	struct doca_flow_pipe_entry *root_jump_to_egress_entry{};
+	struct doca_flow_pipe_entry *vf_arp_to_rss{};
+	struct doca_flow_pipe_entry *syndrome_stats_entries[NUM_OF_PSP_SYNDROMES]{};
+	struct doca_flow_pipe_entry *empty_pipe_entry{};
+	struct doca_flow_pipe_entry *root_default_drop{};
 
 	struct doca_flow_monitor monitor_count{};
+
+	// Shared resource IDs
+	uint32_t mirror_res_id{1};
+	uint32_t mirror_res_id_port{2};
 };
 
 #endif /* FLOWS_H_ */
