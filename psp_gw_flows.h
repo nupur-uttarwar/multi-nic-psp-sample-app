@@ -279,6 +279,60 @@ private:
 	 */
 	doca_error_t ingress_acl_pipe_create(void);
 
+	/**
+	 * Creates the pipe to sample packets with the PSP.S bit set
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t ingress_sampling_pipe_create(void);
+
+	/**
+	 * Creates the PSP decryption pipe.
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t ingress_decrypt_pipe_create(void);
+
+	/**
+	 * @brief Creates a pipe to fwd packets to port
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t empty_pipe_create_not_sampled(void);
+
+	/**
+	 * Creates the pipe to mark and randomly sample outgoing packets
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t egress_sampling_pipe_create(void);
+
+	/**
+	 * Creates the pipe to trap outgoing packets to unregistered destinations
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t egress_acl_pipe_create(void);
+
+	/**
+	 * @brief Creates a pipe whose only purpose is to relay
+	 * flows from the egress domain to the secure-egress domain,
+	 * and to relay injected ARP responses back to the VF.
+	 *
+	 * @next_pipe [in]: The pipe to which the empty pipe
+	 * should forward its traffic.
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t empty_pipe_create(doca_flow_pipe *next_pipe);
+
+	/**
+	 * @brief Creates the first pipe hit by packets arriving to
+	 * the eswitch from either the uplink (wire) or the VF.
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t ingress_root_pipe_create(void);
+
 	bool sampling_enabled (void) {
 		return app_config->log2_sample_rate > 0;
 	}
