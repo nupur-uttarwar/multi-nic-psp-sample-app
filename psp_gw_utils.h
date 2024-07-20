@@ -31,6 +31,7 @@
 
 #include <rte_ether.h>
 #include <rte_byteorder.h>
+#include <algorithm>
 
 #define IF_SUCCESS(result, expr) \
 	if (result == DOCA_SUCCESS) { \

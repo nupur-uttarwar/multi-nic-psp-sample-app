@@ -35,8 +35,11 @@
 #include <psp_gw_flows.h>
 #include <psp_gw_pkt_rss.h>
 #include <psp_gw_utils.h>
+#include <algorithm>
 
 DOCA_LOG_REGISTER(PSP_GW_SVC);
+
+#define CHECK_ALL_SUCCESS(results) (!std::all_of((results).begin(), (results).end(), [](int i) { return i == DOCA_SUCCESS; }))
 
 PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, std::string pf_pci, std::string repr_indices)
 	: config(config)
@@ -65,6 +68,55 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 							    const ::psp_gateway::MultiTunnelRequest *request,
 							    ::psp_gateway::MultiTunnelResponse *response)
 {
+	std::vector<psp_session_desc_t> relevant_sessions;
+	for (int i = 0; i < request->tunnels_size(); i++) {
+		const auto &tunnel_request = request->tunnels(i);
+
+		psp_session_desc_t session_desc;
+		session_desc.remote_pip = tunnel_request.reverse_params().ip_addr();
+		session_desc.remote_vip = tunnel_request.virt_src_ip();
+		session_desc.local_vip = tunnel_request.virt_dst_ip();
+
+		relevant_sessions.push_back(session_desc);
+	}
+
+	std::vector<spi_key_t> egress_spi_keys;
+	for (int i = 0; i < request->tunnels_size(); i++) {
+		const auto &tunnel_request = request->tunnels(i);
+
+		spi_key_t spi_key;
+		spi_key.spi = tunnel_request.reverse_params().spi();
+		spi_key.key = (void *)tunnel_request.reverse_params().encryption_key().c_str();
+
+		egress_spi_keys.push_back(spi_key);
+	}
+
+
+	// select relevant NIC here
+	std::vector<doca_error_t> results;
+	results = psp_flows->set_egress_paths(relevant_sessions, egress_spi_keys);
+	if (CHECK_ALL_SUCCESS(results)) {
+		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Failed to set egress paths");
+	}
+
+	std::vector<spi_key_t> ingress_spi_keys;
+	results = psp_flows->create_ingress_paths(relevant_sessions, ingress_spi_keys);
+	if (CHECK_ALL_SUCCESS(results)) {
+		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Failed to create new ingress paths");
+	}
+
+	// Build, then send the response here
+
+	std::vector<bool> expire_old;
+	for (doca_error_t result : results) {
+		expire_old.push_back(result == DOCA_SUCCESS);
+	}
+	results = psp_flows->expire_ingress_paths(relevant_sessions, expire_old);
+	if (CHECK_ALL_SUCCESS(results)) {
+		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Failed to expire old ingress paths");
+	}
+
+
 	return ::grpc::Status::OK;
 }
 

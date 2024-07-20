@@ -184,8 +184,9 @@ public:
 	 *
 	 * @return: vector of DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	std::vector<doca_error_t> delete_ingress_paths(
-		const std::vector<psp_session_desc_t> &sessions
+	std::vector<doca_error_t> expire_ingress_paths(
+		const std::vector<psp_session_desc_t> &sessions,
+		const std::vector<bool> expire_old
 	);
 
 	/**

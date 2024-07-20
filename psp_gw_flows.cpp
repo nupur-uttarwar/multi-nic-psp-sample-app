@@ -204,8 +204,9 @@ std::vector<doca_error_t> PSP_GatewayFlows::create_ingress_paths(
 	return result;
 }
 
-std::vector<doca_error_t> PSP_GatewayFlows::delete_ingress_paths(
-	const std::vector<psp_session_desc_t> &sessions)
+std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
+	const std::vector<psp_session_desc_t> &sessions,
+	const std::vector<bool> expire_old)
 {
 	DOCA_LOG_INFO("Deleting ingress paths");
 
