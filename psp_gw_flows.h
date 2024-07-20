@@ -121,8 +121,10 @@ public:
 	 * @param [in] pf_pci The PCI address of the PF device
 	 * @param [in] pf_repr_indices The indices of the PF device representors
 	 * @param [in] app_config The application configuration
+	 * @param [in] crypto_id_start The starting index for crypto IDs.
+	 * @param [in] crypto_id_end The ending index for crypto IDs (inclusive).
 	 */
-	PSP_GatewayFlows(std::string pf_pci, std::string pf_repr_indices, psp_gw_app_config *app_config);
+	PSP_GatewayFlows(std::string pf_pci, std::string pf_repr_indices, psp_gw_app_config *app_config, uint32_t crypto_id_start, uint32_t crypto_id_end);
 
 	/**
 	 * Deallocates all associated DOCA objects.
@@ -333,6 +335,21 @@ private:
 	 */
 	doca_error_t ingress_root_pipe_create(void);
 
+	/**
+	 * @brief Determines the next available crypto_id at which to store the
+	 * next PSP encryption key
+	 *
+	 * @return: The crypto_id to use for the PSP shared resource
+	 */
+	uint32_t allocate_crypto_id(void);
+
+	/**
+	 * @brief Releases the given crypto_id so that it can be reused
+	 *
+	 * @crypto_id [in]: The crypto_id to release
+	 */
+	void release_crypto_id(uint32_t crypto_id);
+
 	bool sampling_enabled (void) {
 		return app_config->log2_sample_rate > 0;
 	}
@@ -344,6 +361,9 @@ private:
 
 	// Queried state during init
 	psp_pf_dev pf_dev{};
+
+	// Crypto ids bound to the device
+	std::set<uint32_t> available_crypto_ids;
 
 	// general pipes
 	struct doca_flow_pipe *rss_pipe{};

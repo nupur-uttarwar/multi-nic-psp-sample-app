@@ -41,7 +41,7 @@ DOCA_LOG_REGISTER(PSP_GW_SVC);
 PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, std::string pf_pci, std::string repr_indices)
 	: config(config)
 {
-	psp_flows = std::make_unique<PSP_GatewayFlows>(pf_pci, repr_indices, config);
+	psp_flows = std::make_unique<PSP_GatewayFlows>(pf_pci, repr_indices, config, 1, 1 + config->max_tunnels + rte_lcore_count());
 }
 
 doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)

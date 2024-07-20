@@ -84,12 +84,16 @@ struct eth_ipv4_psp_tunnel_hdr {
 
 const uint8_t PSP_SAMPLE_ENABLE = 1 << 7;
 
-PSP_GatewayFlows::PSP_GatewayFlows(std::string pf_pci, std::string pf_repr_indices, psp_gw_app_config *app_config)
+PSP_GatewayFlows::PSP_GatewayFlows(std::string pf_pci, std::string pf_repr_indices, psp_gw_app_config *app_config, uint32_t crypto_id_start, uint32_t crypto_id_end)
 	: app_config(app_config),
 	  pf_pci(pf_pci),
 	  pf_repr_indices(pf_repr_indices)
 {
 	monitor_count.counter_type = DOCA_FLOW_RESOURCE_TYPE_NON_SHARED;
+
+	for (uint32_t i = crypto_id_start; i <= crypto_id_end; i++) {
+		available_crypto_ids.insert(i);
+	}
 }
 
 PSP_GatewayFlows::~PSP_GatewayFlows()
@@ -159,8 +163,6 @@ doca_error_t PSP_GatewayFlows::init_flows(void)
 	IF_SUCCESS(result, start_port(pf_dev.pf_port_id, pf_dev.dev, &pf_dev.pf_port));
 	IF_SUCCESS(result, start_port(pf_dev.vf_port_id, nullptr, &pf_dev.vf_port));
 	IF_SUCCESS(result, bind_shared_resources());
-	IF_SUCCESS(result, rss_pipe_create());
-	IF_SUCCESS(result, configure_mirrors());
 	IF_SUCCESS(result, create_pipes());
 
 	return result;
@@ -275,23 +277,26 @@ doca_error_t PSP_GatewayFlows::create_pipes(void)
 {
 	doca_error_t result = DOCA_SUCCESS;
 
+	IF_SUCCESS(result, rss_pipe_create());
+	IF_SUCCESS(result, configure_mirrors());
 	IF_SUCCESS(result, syndrome_stats_pipe_create());
 	IF_SUCCESS(result, ingress_acl_pipe_create());
-
 	if (sampling_enabled()) {
 		IF_SUCCESS(result, ingress_sampling_pipe_create());
 	}
-
 	IF_SUCCESS(result, ingress_decrypt_pipe_create());
-
 	if (sampling_enabled()) {
 		IF_SUCCESS(result, empty_pipe_create_not_sampled());
 		IF_SUCCESS(result, egress_sampling_pipe_create());
 	}
 	IF_SUCCESS(result, egress_acl_pipe_create());
 	IF_SUCCESS(result, empty_pipe_create(egress_acl_pipe));
-
 	IF_SUCCESS(result, ingress_root_pipe_create());
+
+	if (result == DOCA_SUCCESS)
+		DOCA_LOG_INFO("Created all static pipes on port %d", pf_dev.pf_port_id);
+	else
+		DOCA_LOG_ERR("Failed to create all static pipes on port %d, err: %s", pf_dev.pf_port_id, doca_error_get_descr(result));
 
 	return result;
 }
@@ -323,15 +328,15 @@ doca_error_t PSP_GatewayFlows::bind_shared_resources(void)
 {
 	doca_error_t result = DOCA_SUCCESS;
 
-	std::vector<uint32_t> psp_ids(app_config->max_tunnels);
-	for (uint32_t i = 0; i < app_config->max_tunnels; i++) {
-		psp_ids[i] = i + 1;
+	std::vector<uint32_t> psp_ids;
+	for (uint32_t i : available_crypto_ids) {
+		psp_ids[i] = i;
 	}
 
 	IF_SUCCESS(result,
 		   doca_flow_shared_resources_bind(DOCA_FLOW_SHARED_RESOURCE_PSP,
 						   psp_ids.data(),
-						   app_config->max_tunnels,
+						   psp_ids.size(),
 						   pf_dev.pf_port));
 
 	return result;
@@ -999,3 +1004,27 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 
 	return result;
 }
+
+uint32_t PSP_GatewayFlows::allocate_crypto_id(void)
+{
+	if (available_crypto_ids.empty()) {
+		DOCA_LOG_WARN("Exhausted available crypto_ids");
+		return UINT32_MAX;
+	}
+
+	auto crypto_id_it = available_crypto_ids.begin();
+	uint32_t crypto_id = *crypto_id_it;
+	available_crypto_ids.erase(crypto_id);
+	DOCA_LOG_DBG("Allocated crypto_id %d", crypto_id);
+	return crypto_id;
+}
+
+void PSP_GatewayFlows::release_crypto_id(uint32_t crypto_id)
+{
+	if (available_crypto_ids.find(crypto_id) != available_crypto_ids.end()) {
+		DOCA_LOG_WARN("Crypto ID %d already released", crypto_id);
+	}
+	DOCA_LOG_DBG("Released crypto_id %d", crypto_id);
+	available_crypto_ids.insert(crypto_id);
+}
+
