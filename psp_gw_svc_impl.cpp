@@ -41,7 +41,7 @@ DOCA_LOG_REGISTER(PSP_GW_SVC);
 PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, std::string pf_pci, std::string repr_indices)
 	: config(config)
 {
-	psp_flows = std::make_unique<PSP_GatewayFlows>(pf_pci, repr_indices, config, 1, 1 + config->max_tunnels + rte_lcore_count());
+	psp_flows = std::make_unique<PSP_GatewayFlows>(pf_pci, repr_indices, config, 0);
 }
 
 doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
@@ -174,7 +174,7 @@ doca_error_t PSP_GatewayImpl::init_doca_flow(void)
 	IF_SUCCESS(result, doca_flow_cfg_set_default_rss(flow_cfg, &rss_config));
 	IF_SUCCESS(result,
 		   doca_flow_cfg_set_nr_shared_resource(flow_cfg,
-							config->max_tunnels + 1,
+							config->crypto_ids_per_nic,
 							DOCA_FLOW_SHARED_RESOURCE_PSP));
 	IF_SUCCESS(result, doca_flow_cfg_set_nr_shared_resource(flow_cfg, 4, DOCA_FLOW_SHARED_RESOURCE_MIRROR));
 	IF_SUCCESS(result, doca_flow_init(flow_cfg));

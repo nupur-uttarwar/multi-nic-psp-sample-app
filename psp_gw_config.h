@@ -114,6 +114,7 @@ struct psp_gw_app_config {
 	rte_ether_addr nexthop_dmac; //!< The dst mac to apply on encap, if enabled
 
 	uint32_t max_tunnels; //!< The maximum number of outgoing tunnel connections supported on this host
+	uint32_t crypto_ids_per_nic; //!< The number of crypto contexts to bind / use per NIC
 
 	struct psp_gw_net_config net_config; //!< List of remote hosts supporting PSP connections
 

@@ -979,5 +979,7 @@ doca_error_t psp_gw_argp_exec(int &argc, char *argv[], psp_gw_app_config *app_co
 		return DOCA_ERROR_DRIVER;
 	}
 
+	app_config->crypto_ids_per_nic = app_config->max_tunnels + 1 + rte_lcore_count();
+
 	return DOCA_SUCCESS;
 }

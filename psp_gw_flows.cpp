@@ -84,14 +84,14 @@ struct eth_ipv4_psp_tunnel_hdr {
 
 const uint8_t PSP_SAMPLE_ENABLE = 1 << 7;
 
-PSP_GatewayFlows::PSP_GatewayFlows(std::string pf_pci, std::string pf_repr_indices, psp_gw_app_config *app_config, uint32_t crypto_id_start, uint32_t crypto_id_end)
+PSP_GatewayFlows::PSP_GatewayFlows(std::string pf_pci, std::string pf_repr_indices, psp_gw_app_config *app_config, uint32_t crypto_id_start)
 	: app_config(app_config),
 	  pf_pci(pf_pci),
 	  pf_repr_indices(pf_repr_indices)
 {
 	monitor_count.counter_type = DOCA_FLOW_RESOURCE_TYPE_NON_SHARED;
 
-	for (uint32_t i = crypto_id_start; i <= crypto_id_end; i++) {
+	for (uint32_t i = crypto_id_start; i < crypto_id_start + app_config->crypto_ids_per_nic; i++) {
 		available_crypto_ids.insert(i);
 	}
 }
@@ -328,15 +328,14 @@ doca_error_t PSP_GatewayFlows::bind_shared_resources(void)
 {
 	doca_error_t result = DOCA_SUCCESS;
 
-	std::vector<uint32_t> psp_ids;
-	for (uint32_t i : available_crypto_ids) {
-		psp_ids[i] = i;
-	}
+	std::vector<uint32_t> psp_ids(available_crypto_ids.begin(), available_crypto_ids.end());
+	uint32_t psp_ids2[available_crypto_ids.size()];
+	std::copy(psp_ids.begin(), psp_ids.end(), psp_ids2);
 
 	IF_SUCCESS(result,
 		   doca_flow_shared_resources_bind(DOCA_FLOW_SHARED_RESOURCE_PSP,
-						   psp_ids.data(),
-						   psp_ids.size(),
+						   psp_ids2,
+						   available_crypto_ids.size(),
 						   pf_dev.pf_port));
 
 	return result;

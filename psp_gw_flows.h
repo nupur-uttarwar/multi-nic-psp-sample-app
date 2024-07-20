@@ -122,9 +122,8 @@ public:
 	 * @param [in] pf_repr_indices The indices of the PF device representors
 	 * @param [in] app_config The application configuration
 	 * @param [in] crypto_id_start The starting index for crypto IDs.
-	 * @param [in] crypto_id_end The ending index for crypto IDs (inclusive).
 	 */
-	PSP_GatewayFlows(std::string pf_pci, std::string pf_repr_indices, psp_gw_app_config *app_config, uint32_t crypto_id_start, uint32_t crypto_id_end);
+	PSP_GatewayFlows(std::string pf_pci, std::string pf_repr_indices, psp_gw_app_config *app_config, uint32_t crypto_id_start);
 
 	/**
 	 * Deallocates all associated DOCA objects.
