@@ -76,14 +76,25 @@ struct psp_session_desc_t {
 	std::string remote_pip;
 };
 
+struct psp_session_desc_hash {
+    std::size_t operator()(const psp_session_desc_t& session) const {
+        return std::hash<std::string>()(session.local_vip + session.remote_vip + session.remote_pip);
+    }
+};
+
+struct psp_session_desc_eq {
+    bool operator()(const psp_session_desc_t& lhs, const psp_session_desc_t& rhs) const {
+        return lhs.local_vip == rhs.local_vip &&
+			   lhs.remote_vip == rhs.remote_vip &&
+		       lhs.remote_pip == rhs.remote_pip;
+    }
+};
+
 /**
  * @brief describes a PSP tunnel connection to a single address
  *        on a remote host
  */
 struct psp_session_egress_t {
-	struct psp_session_desc_t key;
-
-	uint32_t spi_egress;  //!< Security Parameter Index on the wire - host-to-net
 	uint32_t crypto_id;   //!< Internal shared-resource index
 	uint64_t vc;		//!< Virtualization cookie, if enabled
 
@@ -96,9 +107,7 @@ struct psp_session_egress_t {
  *        on a remote host
  */
 struct psp_session_ingress_t {
-	struct psp_session_desc_t key;
-
-	uint32_t spi_ingress; //!< Security Parameter Index on the wire - net-to-host
+	uint32_t spi_ingress;
 
 	struct doca_flow_pipe_entry *ingress_acl_entry;
 	uint64_t pkt_count_ingress;
@@ -350,6 +359,8 @@ private:
 	 */
 	void release_crypto_id(uint32_t crypto_id);
 
+	doca_error_t set_egress_path(const psp_session_desc_t &session, const spi_key_t &spi_key);
+
 	bool sampling_enabled (void) {
 		return app_config->log2_sample_rate > 0;
 	}
@@ -364,6 +375,10 @@ private:
 
 	// Crypto ids bound to the device
 	std::set<uint32_t> available_crypto_ids;
+
+	// Tracking data relevant to each session
+	std::unordered_map<psp_session_desc_t, psp_session_ingress_t, psp_session_desc_hash, psp_session_desc_eq> ingress_sessions;
+	std::unordered_map<psp_session_desc_t, psp_session_egress_t, psp_session_desc_hash, psp_session_desc_eq> egress_sessions;
 
 	// general pipes
 	struct doca_flow_pipe *rss_pipe{};

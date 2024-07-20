@@ -211,10 +211,56 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 	DOCA_LOG_INFO("Deleting ingress paths");
 
 	std::vector<doca_error_t> result;
-	for(auto &session : sessions) {
+	for (size_t i = 0; i < sessions.size(); ++i) {
+		const psp_session_desc_t &session = sessions[i];
+		// bool exp_old = expire_old[i];
+
 		assert(!(session.local_vip.empty() || session.remote_vip.empty() || session.remote_pip.empty()));
 
 		result.push_back(DOCA_SUCCESS);
+	}
+
+	return result;
+}
+
+doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session, const spi_key_t &spi_key) {
+	assert(!(session.local_vip.empty() || session.remote_vip.empty() || session.remote_pip.empty()));
+
+	psp_session_egress_t new_session = {};
+	doca_error_t result = DOCA_SUCCESS;
+	bool update_existing_session = egress_sessions.find(session) != egress_sessions.end();
+	uint32_t old_crypto_id = UINT32_MAX;
+
+	if (update_existing_session) {
+		old_crypto_id = egress_sessions[session].crypto_id;
+	}
+
+	uint32_t new_crypto_id = allocate_crypto_id();
+	if (new_crypto_id == UINT32_MAX) {
+		DOCA_LOG_ERR("Failed to allocate crypto id");
+		result = DOCA_ERROR_NO_MEMORY;
+		goto cleanup;
+	}
+
+	// Bind key to the crypto id
+	// todo, doca_flow_crypto_bind
+
+	if (update_existing_session) {
+		// todo, doca_flow_update_entry helper
+	} else {
+		// todo, doca_flow_add_entry_helper
+	}
+
+	// Update the session to reflect the new state
+	new_session.crypto_id = new_crypto_id;
+	new_session.encap_encrypt_entry = nullptr; // todo
+	new_session.pkt_count_egress = 0;
+	new_session.vc = 0;
+	egress_sessions[session] = new_session;
+
+cleanup:
+	if (update_existing_session) {
+		release_crypto_id(result == DOCA_SUCCESS ? old_crypto_id : new_crypto_id);
 	}
 
 	return result;
@@ -224,16 +270,17 @@ std::vector<doca_error_t> PSP_GatewayFlows::set_egress_paths(
 	const std::vector<psp_session_desc_t> &sessions,
 	const std::vector<spi_key_t> &spi_keys)
 {
-	DOCA_LOG_INFO("Setting egress paths");
+	std::vector<doca_error_t> results;
+	for(std::size_t i = 0; i < sessions.size(); ++i) {
+		auto &session = sessions[i];
+		auto &spi_key = spi_keys[i];
 
-	std::vector<doca_error_t> result;
-	for(auto &session : sessions) {
-		assert(!(session.local_vip.empty() || session.remote_vip.empty() || session.remote_pip.empty()));
-
-		result.push_back(DOCA_SUCCESS);
+		results.push_back(
+			set_egress_path(session, spi_key)
+		);
 	}
 
-	return result;
+	return results;
 }
 
 doca_error_t PSP_GatewayFlows::configure_mirrors(void)
