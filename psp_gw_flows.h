@@ -213,6 +213,15 @@ public:
 		const std::vector<struct spi_keyptr_t> &spi_keys
 	);
 
+	/**
+	 * @brief returns the NIC's public IP.
+	 *
+	 * @return: std::string with the NIC's public IP
+	 */
+	std::string get_pip(void) {
+		return pf_dev.local_pip_str;
+	}
+
 private:
 
 	/**

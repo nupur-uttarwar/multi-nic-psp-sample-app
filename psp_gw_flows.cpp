@@ -152,7 +152,6 @@ doca_error_t PSP_GatewayFlows::init_dev(void)
 	}
 
 	DOCA_LOG_INFO("Probed PF %s, VF %s on PCI %s", pf_dev.pf_mac_str.c_str(), pf_dev.vf_mac_str.c_str(), pf_pci.c_str());
-
 	return result;
 }
 

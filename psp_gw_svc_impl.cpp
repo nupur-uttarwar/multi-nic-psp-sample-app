@@ -100,7 +100,20 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Failed to create new ingress paths");
 	}
 
-	// TODO: Build, then send the response here
+	response->set_request_id(request->request_id());
+	for (size_t i = 0; i < relevant_sessions.size(); i++) {
+		// const ::psp_gateway::SingleTunnelRequest &single_request = request->tunnels(i);
+		::psp_gateway::TunnelParameters *params = response->add_tunnels_params();
+
+		fill_tunnel_params(
+			&ingress_spi_keys[i].key[0],
+			ingress_spi_keys[i].spi,
+			nic->get_pip(),
+			params);
+
+	}
+
+
 
 	std::vector<bool> remote_updated;
 	for (doca_error_t result : results) {
@@ -292,4 +305,24 @@ void PSP_GatewayImpl::check_for_valid_entry(doca_flow_pipe_entry *entry,
 
 	entry_status->nb_processed++;
 	entry_status->entries_in_queue--;
+}
+
+void PSP_GatewayImpl::fill_tunnel_params(uint32_t *key, uint32_t spi, std::string local_pip, psp_gateway::TunnelParameters *params)
+{
+	uint32_t key_len_bits = psp_version_to_key_length_bits(config->net_config.default_psp_proto_ver);
+	uint32_t key_len_bytes = key_len_bits / 8;
+
+	params->set_psp_version(config->net_config.default_psp_proto_ver);
+	params->set_spi(spi);
+	params->set_encryption_key(key, key_len_bytes);
+
+	if (config->outer == DOCA_FLOW_L3_TYPE_IP4)
+		params->set_encap_type(4);
+	else
+		params->set_encap_type(6);
+
+	params->set_ip_addr(local_pip);
+
+	params->set_virt_cookie(0x778899aabbccddee);
+	params->set_mac_addr("aa:bb:cc:dd:ee:ff");
 }

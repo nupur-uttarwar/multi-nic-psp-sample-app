@@ -146,10 +146,16 @@ private:
 	 * @user_ctx [in]: The argument supplied to add_entry, etc.
 	 */
 	static void check_for_valid_entry(doca_flow_pipe_entry *entry,
-					  uint16_t pipe_queue,
-					  enum doca_flow_entry_status status,
-					  enum doca_flow_entry_op op,
-					  void *user_ctx);
+		uint16_t pipe_queue,
+		enum doca_flow_entry_status status,
+		enum doca_flow_entry_op op,
+		void *user_ctx);
+
+	void fill_tunnel_params(
+		uint32_t *key,
+		uint32_t spi,
+		std::string local_pip,
+		psp_gateway::TunnelParameters *params);
 
 	// Application state data:
 	psp_gw_app_config *config{};

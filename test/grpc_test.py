@@ -55,7 +55,8 @@ def test_new_single_tunnel_request(args):
     multi_tunnel_request = MultiTunnelRequest()
     multi_tunnel_request.request_id = args.request_id
     multi_tunnel_request.psp_versions_accepted.extend([1])
-    multi_tunnel_request.tunnels.extend([new_tunnel_request])
+    for _ in range(args.nb_req):
+        multi_tunnel_request.tunnels.extend([new_tunnel_request])
     print(f'Sending request:')
     print(f'\trequest_id: {multi_tunnel_request.request_id}')
     print(f'\tpsp_versions_accepted: {multi_tunnel_request.psp_versions_accepted}')
@@ -71,14 +72,13 @@ def test_new_single_tunnel_request(args):
     response = stub.RequestMultipleTunnelParams(multi_tunnel_request)
     print(f'Received response:')
     print(f'\trequest_id: {response.request_id}')
-    assert len(response.tunnels_params) == 1
     for tunnel in response.tunnels_params:
-        print(f'\tmac_addr: {tunnel.mac_addr}')
-        print(f'\tip_addr: {tunnel.ip_addr}')
-        print(f'\tpsp_version: {tunnel.psp_version}')
-        print(f'\tspi: {tunnel.spi}')
-        print(f'\tencryption_key: {binascii.hexlify(tunnel.encryption_key).decode()}')
-        print(f'\tvirt_cookie: {tunnel.virt_cookie}')
+        print(f'\t\tmac_addr: {tunnel.mac_addr}')
+        print(f'\t\tip_addr: {tunnel.ip_addr}')
+        print(f'\t\tpsp_version: {tunnel.psp_version}')
+        print(f'\t\tspi: {tunnel.spi}')
+        print(f'\t\tencryption_key: {binascii.hexlify(tunnel.encryption_key).decode()}')
+        print(f'\t\tvirt_cookie: {tunnel.virt_cookie}')
 
 def test_key_rotation_request(args):
     from psp_gateway_pb2 import KeyRotationRequest
@@ -154,6 +154,7 @@ if __name__ == '__main__':
             mode_parser.add_argument('--virt_dst_ip', type=str, help='Virtual destination IPv4 address', default='192.168.1.2')
             mode_parser.add_argument('--spi', type=str, help='SPI to send in the request', default=random.randint(1, 1000))
             mode_parser.add_argument('--virt_cookie', type=str, help='Virtualization cookie to send in the request', default=random.randint(1, 1000))
+            mode_parser.add_argument('--nb_req', type=int, help='number of requests to send', default=1)
         if mode == 'op_state':
             mode_parser.add_argument('--op_state', type=str, help='Make current instance active/standby')
 
