@@ -69,7 +69,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 							    ::psp_gateway::MultiTunnelResponse *response)
 {
 	std::vector<psp_session_desc_t> relevant_sessions;
-	std::vector<spi_key_t> egress_spi_keys;
+	std::vector<spi_keyptr_t> egress_spi_keys;
 	for (int i = 0; i < request->tunnels_size(); i++) {
 		const auto &tunnel_request = request->tunnels(i);
 
@@ -79,7 +79,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 		session_desc.local_vip = tunnel_request.virt_dst_ip();
 		relevant_sessions.push_back(session_desc);
 
-		spi_key_t spi_key;
+		spi_keyptr_t spi_key;
 		spi_key.spi = tunnel_request.reverse_params().spi();
 		spi_key.key = (void *)tunnel_request.reverse_params().encryption_key().c_str();
 		egress_spi_keys.push_back(spi_key);

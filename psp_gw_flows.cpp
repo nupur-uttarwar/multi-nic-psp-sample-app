@@ -190,18 +190,57 @@ std::vector<doca_error_t> PSP_GatewayFlows::update_ingress_paths(
 
 std::vector<doca_error_t> PSP_GatewayFlows::create_ingress_paths(
 	const std::vector<psp_session_desc_t> &sessions,
-	const std::vector<spi_key_t> &spi_keys)
+	std::vector<spi_key_t> &spi_keys)
 {
 	DOCA_LOG_INFO("Creating ingress paths");
 
-	std::vector<doca_error_t> result;
-	for(auto &session : sessions) {
-		assert(!(session.local_vip.empty() || session.remote_vip.empty() || session.remote_pip.empty()));
+	// Bulk generate SPIs and keys
+	doca_error_t result = DOCA_SUCCESS;
 
-		result.push_back(DOCA_SUCCESS);
+	std::vector<uint32_t> spis(sessions.size());
+	std::vector<uint32_t[8]> keys(sessions.size());
+	result = generate_keys_spis(
+		psp_version_to_key_length_bits(app_config->net_config.default_psp_proto_ver),
+		sessions.size(),
+		(uint32_t *)keys.data(),
+		spis.data()
+	);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to generate keys and spis: %s", doca_error_get_descr(result));
+		return std::vector<doca_error_t>(sessions.size(), result);
 	}
 
-	return result;
+	for (size_t i = 0; i < sessions.size(); ++i) {
+		spi_key_t spi_key = {};
+		spi_key.spi = spis[i];
+		memcpy(spi_key.key, keys[i], sizeof(spi_key.key));
+		spi_keys.push_back(spi_key);
+	}
+
+	std::vector<doca_error_t> results;
+	for(size_t i = 0; i < sessions.size(); ++i) {
+		auto &session = sessions[i];
+		auto &spi_key = spi_keys[i];
+
+		bool update_existing_session = ingress_sessions.find(session) != ingress_sessions.end();
+
+		assert(!(session.local_vip.empty() || session.remote_vip.empty() || session.remote_pip.empty()));
+
+		// todo, DOCA helper that creates a new ingress ACL entry with SPI and key
+		DOCA_LOG_INFO("Opening SPI %lu", spi_key.spi);
+
+		psp_session_ingress_t new_session = {};
+		new_session.ingress_acl_entry = nullptr;
+		new_session.pkt_count_ingress = 0;
+		if (update_existing_session) {
+			new_session.expiring_ingress_acl_entry = ingress_sessions[session].ingress_acl_entry;
+		}
+		ingress_sessions[session] = new_session;
+
+		results.push_back(DOCA_SUCCESS);
+	}
+
+	return results;
 }
 
 std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
@@ -213,9 +252,21 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 	std::vector<doca_error_t> result;
 	for (size_t i = 0; i < sessions.size(); ++i) {
 		const psp_session_desc_t &session = sessions[i];
-		// bool exp_old = expire_old[i];
+		bool exp_old = expire_old[i];
 
 		assert(!(session.local_vip.empty() || session.remote_vip.empty() || session.remote_pip.empty()));
+
+		doca_flow_pipe_entry *expiring_entry = nullptr;
+		if (exp_old) {
+			expiring_entry = ingress_sessions[session].expiring_ingress_acl_entry;
+		} else {
+			expiring_entry = ingress_sessions[session].ingress_acl_entry;
+			ingress_sessions[session].ingress_acl_entry = ingress_sessions[session].expiring_ingress_acl_entry;
+		}
+		ingress_sessions[session].expiring_ingress_acl_entry = nullptr;
+
+		// todo call remove pipe entry helper on expiring_entry
+		DOCA_LOG_INFO("Closing %s ingress entry %p", exp_old ? "old" : "new", expiring_entry);
 
 		result.push_back(DOCA_SUCCESS);
 	}
@@ -223,7 +274,7 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 	return result;
 }
 
-doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session, const spi_key_t &spi_key) {
+doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session, const spi_keyptr_t &spi_key) {
 	assert(!(session.local_vip.empty() || session.remote_vip.empty() || session.remote_pip.empty()));
 
 	psp_session_egress_t new_session = {};
@@ -255,8 +306,9 @@ doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session
 	new_session.crypto_id = new_crypto_id;
 	new_session.encap_encrypt_entry = nullptr; // todo
 	new_session.pkt_count_egress = 0;
-	new_session.vc = 0;
 	egress_sessions[session] = new_session;
+
+	DOCA_LOG_INFO("Created egress path with SPI %lu", spi_key.spi);
 
 cleanup:
 	if (update_existing_session) {
@@ -268,10 +320,10 @@ cleanup:
 
 std::vector<doca_error_t> PSP_GatewayFlows::set_egress_paths(
 	const std::vector<psp_session_desc_t> &sessions,
-	const std::vector<spi_key_t> &spi_keys)
+	const std::vector<spi_keyptr_t> &spi_keys)
 {
 	std::vector<doca_error_t> results;
-	for(std::size_t i = 0; i < sessions.size(); ++i) {
+	for(size_t i = 0; i < sessions.size(); ++i) {
 		auto &session = sessions[i];
 		auto &spi_key = spi_keys[i];
 
@@ -1075,3 +1127,55 @@ void PSP_GatewayFlows::release_crypto_id(uint32_t crypto_id)
 	available_crypto_ids.insert(crypto_id);
 }
 
+
+doca_error_t PSP_GatewayFlows::generate_keys_spis(uint32_t key_len_bits,
+						 uint32_t nr_keys_spis,
+						 uint32_t *keys,
+						 uint32_t *spis)
+{
+	doca_error_t result;
+	struct doca_flow_crypto_psp_spi_key_bulk *bulk_key_gen = nullptr;
+
+	auto key_type = key_len_bits == 128 ? DOCA_FLOW_CRYPTO_KEY_128 : DOCA_FLOW_CRYPTO_KEY_256;
+	auto key_array_size = key_len_bits / 32; // 32-bit words
+
+	DOCA_LOG_DBG("Generating %d SPI/Key pairs", nr_keys_spis);
+
+	result = doca_flow_crypto_psp_spi_key_bulk_alloc(pf_dev.pf_port, key_type, nr_keys_spis, &bulk_key_gen);
+	if (result != DOCA_SUCCESS || !bulk_key_gen) {
+		DOCA_LOG_ERR("Failed to allocate bulk-key-gen object: %s", doca_error_get_descr(result));
+		return DOCA_ERROR_NO_MEMORY;
+	}
+
+	uint64_t start_time = rte_get_tsc_cycles();
+	result = doca_flow_crypto_psp_spi_key_bulk_generate(bulk_key_gen);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to generate keys and SPIs: %s", doca_error_get_descr(result));
+		doca_flow_crypto_psp_spi_key_bulk_free(bulk_key_gen);
+		return DOCA_ERROR_IO_FAILED;
+	}
+
+	for (uint32_t i = 0; i < nr_keys_spis; i++) {
+		uint32_t *cur_key = keys + (i * key_array_size);
+		result = doca_flow_crypto_psp_spi_key_bulk_get(bulk_key_gen, i, &spis[i], cur_key);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to retrieve SPI/Key: %s", doca_error_get_descr(result));
+			doca_flow_crypto_psp_spi_key_bulk_free(bulk_key_gen);
+			return DOCA_ERROR_IO_FAILED;
+		}
+	}
+
+	uint64_t end_time = rte_get_tsc_cycles();
+	double total_time = (end_time - start_time) / (double)rte_get_tsc_hz();
+	double kilo_kps = 1e-3 * nr_keys_spis / total_time;
+	if (app_config->print_perf_flags & PSP_PERF_KEY_GEN_PRINT) {
+		DOCA_LOG_INFO("Generated %d SPI/Key pairs in %f seconds, %f KILO-KPS",
+			      nr_keys_spis,
+			      total_time,
+			      kilo_kps);
+	}
+
+	doca_flow_crypto_psp_spi_key_bulk_free(bulk_key_gen);
+
+	return DOCA_SUCCESS;
+}

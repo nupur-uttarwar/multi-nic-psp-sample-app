@@ -77,7 +77,7 @@ struct psp_session_desc_t {
 };
 
 struct psp_session_desc_hash {
-    std::size_t operator()(const psp_session_desc_t& session) const {
+    size_t operator()(const psp_session_desc_t& session) const {
         return std::hash<std::string>()(session.local_vip + session.remote_vip + session.remote_pip);
     }
 };
@@ -96,7 +96,6 @@ struct psp_session_desc_eq {
  */
 struct psp_session_egress_t {
 	uint32_t crypto_id;   //!< Internal shared-resource index
-	uint64_t vc;		//!< Virtualization cookie, if enabled
 
 	doca_flow_pipe_entry *encap_encrypt_entry;
 	uint64_t pkt_count_egress;
@@ -107,16 +106,20 @@ struct psp_session_egress_t {
  *        on a remote host
  */
 struct psp_session_ingress_t {
-	uint32_t spi_ingress;
-
 	struct doca_flow_pipe_entry *ingress_acl_entry;
+	struct doca_flow_pipe_entry *expiring_ingress_acl_entry;
 	uint64_t pkt_count_ingress;
 };
 
 
-struct spi_key_t {
+struct spi_keyptr_t {
 	uint64_t spi;
 	void *key;
+};
+
+struct spi_key_t {
+	uint64_t spi;
+	uint32_t key[8];
 };
 
 /**
@@ -184,7 +187,7 @@ public:
 	 */
 	std::vector<doca_error_t> create_ingress_paths(
 		const std::vector<struct psp_session_desc_t> &sessions,
-		const std::vector<struct spi_key_t> &spi_keys
+		std::vector<struct spi_key_t> &spi_keys
 	);
 
 	/**
@@ -207,7 +210,7 @@ public:
 	 */
 	std::vector<doca_error_t> set_egress_paths(
 		const std::vector<psp_session_desc_t> &sessions,
-		const std::vector<struct spi_key_t> &spi_keys
+		const std::vector<struct spi_keyptr_t> &spi_keys
 	);
 
 private:
@@ -359,7 +362,22 @@ private:
 	 */
 	void release_crypto_id(uint32_t crypto_id);
 
-	doca_error_t set_egress_path(const psp_session_desc_t &session, const spi_key_t &spi_key);
+	/**
+	 * @brief Generates a new SPI and key pair for use in a PSP session
+	 *
+	 * @key_len_bits [in]: The length of the key to generate
+	 * @nr_keys_spis [in]: The number of keys and SPIs to generate
+	 * @keys [out]: The generated keys
+	 * @spis [out]: The generated SPIs
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t
+	generate_keys_spis(uint32_t key_len_bits,
+						 uint32_t nr_keys_spis,
+						 uint32_t *keys,
+						 uint32_t *spis);
+
+	doca_error_t set_egress_path(const psp_session_desc_t &session, const spi_keyptr_t &spi_key);
 
 	bool sampling_enabled (void) {
 		return app_config->log2_sample_rate > 0;
