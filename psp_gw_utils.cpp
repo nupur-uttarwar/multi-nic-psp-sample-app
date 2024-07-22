@@ -63,3 +63,16 @@ uint32_t psp_version_to_key_length_bits(uint32_t psp_proto_ver)
 {
     return (psp_proto_ver == 0 || psp_proto_ver == 2) ? 128 : 256;
 }
+
+void print_nic(std::string prefix, psp_gw_nic_desc_t nic)
+{
+	std::string out = prefix + " NIC: \n";
+	out += "\thostname: " + nic.hostname + "\n";
+	out += "\tpci: " + nic.pci + "\n";
+	out += "\tsvc_ip: " + ipv4_to_string(nic.svc_ip) + "\n";
+	out += "\tpip: " + nic.pip + "\n";
+	for (auto vip : nic.vips) {
+		out += "\tvip: " + vip + "\n";
+	}
+	printf("%s", out.c_str());
+}

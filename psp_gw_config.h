@@ -68,7 +68,7 @@ static const std::map<std::string, uint16_t> PSP_PERF_MAP = {
 
 static const uint32_t PSP_MAX_PEERS = 1 << 20; /* Maximum number of peers supported by the PSP Gateway. Currently only 1
 					   is supported. */
-static const uint32_t PSP_MAX_SESSIONS = 1;    /* Maximum number of sessions supported by the PSP Gateway for each host.
+static const uint32_t PSP_MAX_SESSIONS = 128;    /* Maximum number of sessions supported by the PSP Gateway for each host.
 						  Currently only 1 is supported. */
 
 static constexpr uint32_t IPV6_ADDR_LEN = 16;
@@ -81,10 +81,12 @@ typedef uint8_t ipv6_addr_t[IPV6_ADDR_LEN];
  * Currently, only one PF per host is supported, but this
  * could be extended to a list of PFs.
  */
-struct psp_gw_host {
-	uint32_t psp_proto_ver;	       /*!< 0 for 128-bit AES-GCM, 1 for 256-bit */
-	std::vector<doca_be32_t> vips; /*!< virtual IP addresses */
+struct psp_gw_nic_desc_t {
+	std::string hostname; /*!< hostname of the host which is running the psp service*/
+	std::string pci; /*!< PCI of the NIC running on the host */
 	doca_be32_t svc_ip;	       /*!< control plane gRPC service address */
+	std::string pip;	       /*!< physical IP address */
+	std::vector<std::string> vips; /*!< virtual IP addresses */
 };
 
 /**
@@ -96,7 +98,9 @@ struct psp_gw_net_config {
 	uint32_t crypt_offset;		//!< The number of words to skip when performing encryption
 	uint32_t default_psp_proto_ver; /*!< 0 for 128-bit AES-GCM, 1 for 256-bit */
 
-	std::vector<psp_gw_host> hosts; //!< The list of participating hosts and their interfaces
+	std::vector<psp_gw_nic_desc_t> local_nics; //!< The list of participating hosts and their interfaces
+	std::vector<psp_gw_nic_desc_t> remote_nics; //!< The list of participating hosts and their interfaces
+	std::map<std::string, psp_gw_nic_desc_t*> vip_nic_lookup; //!< A map of VIPs to their host
 };
 
 /**
@@ -113,6 +117,7 @@ struct psp_gw_app_config {
 	std::string local_svc_addr; //!< The IPv4 addr (and optional port number) of the locally running gRPC service.
 	std::string local_vf_addr;  //!< The IPv4 IP address of the VF; required for create_tunnels_at_startup
 	std::string json_path;	    //!< The path to the JSON file containing the sessions configuration
+	std::string hostname;	    //!< The hostname of the local host
 
 	rte_ether_addr dcap_dmac; //!< The dst mac to apply on decap
 

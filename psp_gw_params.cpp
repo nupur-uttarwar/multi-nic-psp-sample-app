@@ -175,49 +175,6 @@ static doca_error_t handle_nexthop_dmac_param(void *param, void *config)
 }
 
 /**
- * @brief Parses a host string with optional subnet mask suffix (i.e. /24).
- *
- * @ip [in/out]: host string, returned with subnet mask suffix removed (and applied)
- * @mask_len [out]: the subnet mask length if one was found; 32 (single host) otherwise
- * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
- */
-static doca_error_t parse_subnet_mask(std::string &ip, uint32_t &mask_len)
-{
-	mask_len = 32;
-	size_t slash = ip.find('/');
-	if (slash == std::string::npos) {
-		return DOCA_SUCCESS;
-	}
-
-	std::string mask_len_str = ip.substr(slash + 1);
-	mask_len = std::atoi(mask_len_str.c_str());
-
-	if (mask_len == 0 || mask_len > 32) {
-		DOCA_LOG_ERR("Invalid IP addr mask string found: %s", ip.c_str());
-		return DOCA_ERROR_INVALID_VALUE;
-	}
-
-	ip = ip.substr(0, slash);
-
-	if (mask_len < 32) {
-		// adjust the IP address to zero out the unmasked bits;
-		// i.e. 1.2.3.4/24 -> 1.2.3.0
-		doca_be32_t ip_parsed;
-		if (inet_pton(AF_INET, ip.c_str(), &ip_parsed) != 1) {
-			DOCA_LOG_ERR("Invalid IP addr found before mask: %s", ip.c_str());
-			return DOCA_ERROR_INVALID_VALUE;
-		}
-
-		uint32_t ip_native = RTE_BE32(ip_parsed);
-		uint32_t mask = (1 << (32 - mask_len)) - 1;
-		ip_native &= ~mask;
-		ip = ipv4_to_string(RTE_BE32(ip_native));
-	}
-
-	return DOCA_SUCCESS;
-}
-
-/**
  * @brief Indicates the application should include the VC in the PSP tunnel header
  *
  * @param [in]: A pointer to a boolean flag
@@ -596,6 +553,7 @@ static doca_error_t handle_config_file_param(void *param, void *config)
 	}
 	app_config->json_path = json_path;
 	DOCA_LOG_INFO("Using JSON file: %s", app_config->json_path.c_str());
+
 	return DOCA_SUCCESS;
 }
 
@@ -760,6 +718,54 @@ static doca_error_t parse_json_config(json_object *json_obj_config, psp_gw_app_c
 	return DOCA_SUCCESS;
 }
 
+static doca_error_t parse_hostname(json_object *json_obj_remote_addr,
+					      psp_gw_app_config *app_config,
+					      void *data)
+{
+	(void)app_config;
+	struct psp_gw_nic_desc_t *host = (struct psp_gw_nic_desc_t *)data;
+
+	doca_error_t result = json_object_ver_get_string(json_obj_remote_addr, host->hostname);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Invalid hostname, expected string");
+		return result;
+	}
+
+	return DOCA_SUCCESS;
+}
+
+static doca_error_t parse_pci(json_object *json_obj_remote_addr,
+					      psp_gw_app_config *app_config,
+					      void *data)
+{
+	(void)app_config;
+	struct psp_gw_nic_desc_t *host = (struct psp_gw_nic_desc_t *)data;
+
+	doca_error_t result = json_object_ver_get_string(json_obj_remote_addr, host->pci);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Invalid pci, expected string");
+		return result;
+	}
+
+	return DOCA_SUCCESS;
+}
+
+static doca_error_t parse_pip(json_object *json_obj_remote_addr,
+					      psp_gw_app_config *app_config,
+					      void *data)
+{
+	(void)app_config;
+	struct psp_gw_nic_desc_t *host = (struct psp_gw_nic_desc_t *)data;
+
+	doca_error_t result = json_object_ver_get_string(json_obj_remote_addr, host->pip);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Invalid pip, expected string");
+		return result;
+	}
+
+	return DOCA_SUCCESS;
+}
+
 /**
  * @brief Parses the remote gRPC address
  *
@@ -768,12 +774,12 @@ static doca_error_t parse_json_config(json_object *json_obj_config, psp_gw_app_c
  * @data [in/out]: Custom data to pass to the handler
  * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
  */
-static doca_error_t parse_remote_grpc_address(json_object *json_obj_remote_addr,
+static doca_error_t parse_grpc_address(json_object *json_obj_remote_addr,
 					      psp_gw_app_config *app_config,
 					      void *data)
 {
 	(void)app_config;
-	struct psp_gw_host *host = (struct psp_gw_host *)data;
+	struct psp_gw_nic_desc_t *host = (struct psp_gw_nic_desc_t *)data;
 
 	std::string svcaddr;
 	doca_error_t result = json_object_ver_get_string(json_obj_remote_addr, svcaddr);
@@ -787,44 +793,7 @@ static doca_error_t parse_remote_grpc_address(json_object *json_obj_remote_addr,
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 
-	DOCA_LOG_DBG("Remote gRPC address: %s", svcaddr.c_str());
-
-	return DOCA_SUCCESS;
-}
-
-/**
- * @brief Parses the local VIP
- *
- * @json_obj_local_vip [in]: JSON object
- * @app_config [in/out]: Application config
- * @data [in/out]: Custom data to pass to the handler
- * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
- */
-static doca_error_t parse_local_vip(json_object *json_obj_local_vip, psp_gw_app_config *app_config, void *data)
-{
-	(void)data;
-	std::string local_vip_str;
-	doca_error_t result = json_object_ver_get_string(json_obj_local_vip, local_vip_str);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Invalid local-vip, expected string");
-		return result;
-	}
-	if (!app_config->local_vf_addr.empty() && app_config->local_vf_addr == local_vip_str)
-		return DOCA_SUCCESS;
-	else if (!app_config->local_vf_addr.empty()) {
-		DOCA_LOG_ERR("Cannot specify both 'local-vip' and flag '--vf-name' or different 'local-vip'");
-		return DOCA_ERROR_INVALID_VALUE;
-	}
-
-	/* verify legal format */
-	rte_be32_t local_vip = 0;
-	if (inet_pton(AF_INET, local_vip_str.c_str(), &local_vip) != 1) {
-		DOCA_LOG_ERR("Malformed virtual IP addr: %s", local_vip_str.c_str());
-		return DOCA_ERROR_INVALID_VALUE;
-	}
-	app_config->local_vf_addr = local_vip_str;
-
-	DOCA_LOG_DBG("Local VIP: %s", local_vip_str.c_str());
+	DOCA_LOG_DBG("gRPC address: %s", svcaddr.c_str());
 
 	return DOCA_SUCCESS;
 }
@@ -837,11 +806,12 @@ static doca_error_t parse_local_vip(json_object *json_obj_local_vip, psp_gw_app_
  * @data [in/out]: Custom data to pass to the handler
  * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
  */
-static doca_error_t parse_remote_vips(json_object *json_obj_remote_vips, psp_gw_app_config *app_config, void *data)
+static doca_error_t parse_vips(json_object *json_obj_remote_vips, psp_gw_app_config *app_config, void *data)
 {
 	(void)app_config;
-	std::vector<doca_be32_t> *vips = (std::vector<doca_be32_t> *)data;
+	struct psp_gw_nic_desc_t *host = (struct psp_gw_nic_desc_t *)data;
 	int nb_vips;
+
 	doca_error_t result = json_object_ver_array_length(json_obj_remote_vips, nb_vips);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Invalid remote-vips, expected array");
@@ -857,98 +827,15 @@ static doca_error_t parse_remote_vips(json_object *json_obj_remote_vips, psp_gw_
 		std::string vip_str;
 		doca_error_t result = json_object_ver_get_string(json_obj_vip, vip_str);
 		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Invalid remote-vip, expected string");
+			DOCA_LOG_ERR("Invalid vip, expected string");
 			return result;
 		}
 
-		uint32_t mask_len = 0;
-		result = parse_subnet_mask(vip_str, mask_len);
-		if (result != DOCA_SUCCESS) {
-			return result;
-		}
-		if (mask_len < 16) {
-			DOCA_LOG_ERR("Remote VIP subnet mask length < 16 not supported; found %d", mask_len);
-			return DOCA_ERROR_INVALID_VALUE;
-		}
-
-		doca_be32_t vip;
-		if (inet_pton(AF_INET, vip_str.c_str(), &vip) != 1) {
-			DOCA_LOG_ERR("Invalid remote VIP IPv4 addr: %s", vip_str.c_str());
-			return DOCA_ERROR_INVALID_VALUE;
-		}
-
-		uint32_t n_hosts = 1 << (32 - mask_len); // note mask_len is between 16 and 32
-		for (uint32_t i = 0; i < n_hosts; i++) {
-			if (i < 16) {
-				std::string host_virt_ip = ipv4_to_string(vip);
-				DOCA_LOG_DBG("Added remote vip %d: %s", (int)vips->size(), host_virt_ip.c_str());
-			} else if (i == 16) {
-				DOCA_LOG_DBG("And more Hosts... (%d)", n_hosts);
-			} // else, silent
-			vips->push_back(vip);
-			vip = RTE_BE32(RTE_BE32(vip) + 1);
-		}
+		host->vips.push_back(vip_str);
 	}
 
 	return DOCA_SUCCESS;
 }
-
-/**
- * @brief Parses the sessions
- *
- * @json_obj_sessions [in]: JSON object
- * @app_config [in/out]: Application config
- * @data [in/out]: Custom data to pass to the handler
- * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
- */
-static doca_error_t parse_sessions(json_object *json_obj_sessions, psp_gw_app_config *app_config, void *data)
-{
-	struct psp_gw_host *host = (struct psp_gw_host *)data;
-	int nb_sessions;
-	doca_error_t result = json_object_ver_array_length(json_obj_sessions, nb_sessions);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Invalid sessions, expected array");
-		return result;
-	}
-	if (nb_sessions == 0) {
-		DOCA_LOG_ERR("No sessions found in JSON file for host %s", ipv4_to_string(host->svc_ip).c_str());
-		return DOCA_ERROR_INVALID_VALUE;
-	}
-
-	if ((uint32_t)nb_sessions > PSP_MAX_SESSIONS) {
-		DOCA_LOG_ERR("Too many sessions in JSON file for host %s: %d, max allowed: %d",
-			     ipv4_to_string(host->svc_ip).c_str(),
-			     nb_sessions,
-			     PSP_MAX_SESSIONS);
-		return DOCA_ERROR_INVALID_VALUE;
-	}
-
-	for (int i = 0; i < nb_sessions; i++) { // currently only one session is supported
-		DOCA_LOG_DBG("Session %d for remote ip %s :", i, ipv4_to_string(host->svc_ip).c_str());
-
-		json_object *json_obj_session = json_object_array_get_idx(json_obj_sessions, i);
-
-		psp_json_field_handlers handlers = {
-			{"local-vip", parse_local_vip, false},
-			{"remote-vips", parse_remote_vips, true},
-		};
-
-		doca_error_t result =
-			handle_json_level_fields(handlers, json_obj_session, app_config, (void *)&host->vips);
-		if (result != DOCA_SUCCESS) {
-			return result;
-		}
-
-		if (host->vips.empty()) {
-			DOCA_LOG_ERR("No remote vips found in JSON file for host %s",
-				     ipv4_to_string(host->svc_ip).c_str());
-			return DOCA_ERROR_INVALID_VALUE;
-		}
-	}
-
-	return DOCA_SUCCESS;
-}
-
 
 /**
  * @brief Parses the peers
@@ -958,42 +845,52 @@ static doca_error_t parse_sessions(json_object *json_obj_sessions, psp_gw_app_co
  * @data [in/out]: Custom data to pass to the handler
  * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
  */
-static doca_error_t parse_json_peers(json_object *json_obj_peers, psp_gw_app_config *app_config, void *data)
+static doca_error_t parse_json_hosts(json_object *json_obj_peers, psp_gw_app_config *app_config, void *data)
 {
 	(void)data;
-	int nb_peers;
-	doca_error_t result = json_object_ver_array_length(json_obj_peers, nb_peers);
+	int nb_hosts;
+	doca_error_t result = json_object_ver_array_length(json_obj_peers, nb_hosts);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Invalid peers, expected array");
 		return result;
 	}
 
-	if (nb_peers == 0) {
+	if (nb_hosts == 0) {
 		DOCA_LOG_WARN("No peers found in JSON file");
 		return DOCA_SUCCESS;
 	}
 
-	if ((uint32_t)nb_peers > PSP_MAX_PEERS) {
-		DOCA_LOG_ERR("Too many peers in JSON file: %d, max allowed: %d", nb_peers, PSP_MAX_PEERS);
+	if ((uint32_t)nb_hosts > PSP_MAX_PEERS) {
+		DOCA_LOG_ERR("Too many peers in JSON file: %d, max allowed: %d", nb_hosts, PSP_MAX_PEERS);
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 
-	for (int i = 0; i < nb_peers; i++) {
+	for (int i = 0; i < nb_hosts; i++) {
 		DOCA_LOG_DBG("Peer %d :", i);
 		json_object *json_obj_peer = json_object_array_get_idx(json_obj_peers, i);
-		struct psp_gw_host host = {};
+		struct psp_gw_nic_desc_t nic = {};
 
 		psp_json_field_handlers handlers = {
-			{"remote-grpc-address", parse_remote_grpc_address, true},
-			{"sessions", parse_sessions, true},
+			{"hostname", parse_hostname, true},
+			{"grpc-address", parse_grpc_address, true},
+			{"pci", parse_pci, true},
+			{"pip", parse_pip, true},
+			{"vips", parse_vips, true},
 		};
 
-		doca_error_t result = handle_json_level_fields(handlers, json_obj_peer, app_config, (void *)&host);
+		doca_error_t result = handle_json_level_fields(handlers, json_obj_peer, app_config, (void *)&nic);
 		if (result != DOCA_SUCCESS) {
 			return result;
 		}
 
-		app_config->net_config.hosts.push_back(host);
+		// Separate local and remote NICs by hostname
+		if (nic.hostname == app_config->hostname) {
+			print_nic("LOCAL", nic);
+			app_config->net_config.local_nics.push_back(nic);
+		} else {
+			print_nic("REMOTE", nic);
+			app_config->net_config.remote_nics.push_back(nic);
+		}
 	}
 
 	return DOCA_SUCCESS;
@@ -1024,7 +921,7 @@ doca_error_t psp_gw_parse_config_file(psp_gw_app_config *app_config)
 
 	psp_json_field_handlers handlers = {
 		{"config", parse_json_config, true},
-		{"peers", parse_json_peers, true},
+		{"hosts", parse_json_hosts, true},
 	};
 
 	result = handle_json_level_fields(handlers, parsed_json, app_config, nullptr);
@@ -1273,6 +1170,11 @@ doca_error_t psp_gw_argp_exec(int &argc, char *argv[], psp_gw_app_config *app_co
 		doca_argp_destroy();
 		return DOCA_ERROR_INVALID_VALUE;
 	}
+
+	char hostname[256];
+	assert(gethostname(hostname, sizeof(hostname)) == 0);
+	DOCA_LOG_INFO("PSP Gateway Service started on %s", hostname);
+	app_config->hostname = hostname;
 
 	return DOCA_SUCCESS;
 }

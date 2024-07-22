@@ -124,7 +124,7 @@ public:
 	 * @local_vf_addrs [in]: the IP address of the local VF netdev
 	 * @return: the number of hosts successfully connected and removed from 'hosts'
 	 */
-	size_t try_connect(std::vector<psp_gw_host> &hosts, rte_be32_t local_vf_addr);
+	size_t try_connect(std::vector<psp_gw_nic_desc_t> &hosts, rte_be32_t local_vf_addr);
 
 	doca_error_t init_devs();
 	doca_error_t init_flows();

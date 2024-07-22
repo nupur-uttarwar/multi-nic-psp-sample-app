@@ -32,6 +32,7 @@
 #include <rte_ether.h>
 #include <rte_byteorder.h>
 #include <algorithm>
+#include "psp_gw_config.h"
 
 #define IF_SUCCESS(result, expr) \
 	if (result == DOCA_SUCCESS) { \
@@ -75,5 +76,7 @@ bool is_empty_mac_addr(const rte_ether_addr &addr);
  * @return: 128 or 256 depending on the key type
  */
 uint32_t psp_version_to_key_length_bits(uint32_t psp_proto_ver);
+
+void print_nic(std::string prefix, psp_gw_nic_desc_t nic);
 
 #endif /* _PSP_GW_UTILS_H_ */

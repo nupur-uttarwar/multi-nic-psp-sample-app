@@ -183,7 +183,7 @@ int main(int argc, char **argv)
 		// remove entries from the list as tunnels are created.
 		// Otherwise, this list will be left empty and tunnels will be created
 		// on demand via the miss path.
-		std::vector<psp_gw_host> remotes_to_connect;
+		std::vector<psp_gw_nic_desc_t> remotes_to_connect;
 		rte_be32_t local_vf_addr = 0;
 		if (app_config.create_tunnels_at_startup) {
 			if (inet_pton(AF_INET, app_config.local_vf_addr.c_str(), &local_vf_addr) != 1) {
@@ -191,7 +191,7 @@ int main(int argc, char **argv)
 				exit_status = EXIT_FAILURE;
 				goto dpdk_destroy;
 			}
-			remotes_to_connect = app_config.net_config.hosts;
+			remotes_to_connect = app_config.net_config.remote_nics;
 		}
 
 		while (!force_quit) {

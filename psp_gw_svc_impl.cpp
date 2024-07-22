@@ -226,7 +226,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 	return ::grpc::Status::OK;
 }
 
-size_t PSP_GatewayImpl::try_connect(std::vector<psp_gw_host> &hosts, rte_be32_t local_vf_addr)
+size_t PSP_GatewayImpl::try_connect(std::vector<psp_gw_nic_desc_t> &hosts, rte_be32_t local_vf_addr)
 {
 	size_t num_connected = 0;
 	// for (auto host_iter = hosts.begin(); host_iter != hosts.end(); /* increment below */) {

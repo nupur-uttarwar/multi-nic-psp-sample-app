@@ -2,16 +2,25 @@
     "config": {
 
     },
-    "peers": [
+    "hosts": [
         {
-            "remote-grpc-address": "10.237.113.143",
-            "sessions": [
-                {
-                    // "local-vip": "60.0.0.68",
-                    "remote-vips": [
-                        "60.0.0.67"
-                    ]
-                }
+            "hostname": "doca-vr-068",
+            "pci": "0000:8a:00.0",
+            "pip": "fe80::a288:c2ff:fe11:ee86",
+            "grpc-address": "10.137.189.68",
+            "vips": [
+                "60.0.0.68"
+            ]
+        },
+        {
+            "hostname": "doca-vr-067",
+            "pci": "0000:8a:00.0",
+            "pip": "fe80::a288:c2ff:fe11:e494",
+            "grpc-address": "10.137.189.67",
+            "vips": [
+                "60.0.0.67",
+                "60.0.0.1",
+                "60.0.0.2"
             ]
         }
     ]
