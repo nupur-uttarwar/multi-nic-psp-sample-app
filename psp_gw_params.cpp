@@ -734,6 +734,22 @@ static doca_error_t parse_hostname(json_object *json_obj_remote_addr,
 	return DOCA_SUCCESS;
 }
 
+static doca_error_t parse_repr(json_object *json_obj_remote_addr,
+					      psp_gw_app_config *app_config,
+					      void *data)
+{
+	(void)app_config;
+	struct psp_gw_nic_desc_t *host = (struct psp_gw_nic_desc_t *)data;
+
+	doca_error_t result = json_object_ver_get_string(json_obj_remote_addr, host->repr);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Invalid pci, expected string");
+		return result;
+	}
+
+	return DOCA_SUCCESS;
+}
+
 static doca_error_t parse_pci(json_object *json_obj_remote_addr,
 					      psp_gw_app_config *app_config,
 					      void *data)
@@ -874,6 +890,7 @@ static doca_error_t parse_json_hosts(json_object *json_obj_peers, psp_gw_app_con
 			{"hostname", parse_hostname, true},
 			{"grpc-address", parse_grpc_address, true},
 			{"pci", parse_pci, true},
+			{"repr", parse_repr, true},
 			{"pip", parse_pip, true},
 			{"vips", parse_vips, true},
 		};
@@ -885,10 +902,8 @@ static doca_error_t parse_json_hosts(json_object *json_obj_peers, psp_gw_app_con
 
 		// Separate local and remote NICs by hostname
 		if (nic.hostname == app_config->hostname) {
-			print_nic("LOCAL", nic);
 			app_config->net_config.local_nics.push_back(nic);
 		} else {
-			print_nic("REMOTE", nic);
 			app_config->net_config.remote_nics.push_back(nic);
 		}
 	}

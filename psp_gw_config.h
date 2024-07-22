@@ -84,6 +84,7 @@ typedef uint8_t ipv6_addr_t[IPV6_ADDR_LEN];
 struct psp_gw_nic_desc_t {
 	std::string hostname; /*!< hostname of the host which is running the psp service*/
 	std::string pci; /*!< PCI of the NIC running on the host */
+	std::string repr; /*!< representor on that PCI dev, like pf0vf0 */
 	doca_be32_t svc_ip;	       /*!< control plane gRPC service address */
 	std::string pip;	       /*!< physical IP address */
 	std::vector<std::string> vips; /*!< virtual IP addresses */

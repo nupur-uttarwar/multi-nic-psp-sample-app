@@ -84,10 +84,9 @@ struct eth_ipv4_psp_tunnel_hdr {
 
 const uint8_t PSP_SAMPLE_ENABLE = 1 << 7;
 
-PSP_GatewayFlows::PSP_GatewayFlows(std::string pf_pci, std::string pf_repr_indices, psp_gw_app_config *app_config, uint32_t crypto_id_start)
+PSP_GatewayFlows::PSP_GatewayFlows(psp_gw_nic_desc_t nic_info, psp_gw_app_config *app_config, uint32_t crypto_id_start)
 	: app_config(app_config),
-	  pf_pci(pf_pci),
-	  pf_repr_indices(pf_repr_indices)
+	  nic_info(nic_info)
 {
 	monitor_count.counter_type = DOCA_FLOW_RESOURCE_TYPE_NON_SHARED;
 
@@ -111,12 +110,12 @@ doca_error_t PSP_GatewayFlows::init_dev(void)
 		"vport_match=1,"
 		"repr_matching_en=0,"
 		"representor=") +
-		pf_repr_indices; // indicate which representors to probe
+		nic_info.repr; // indicate which representors to probe
 
-	IF_SUCCESS(result, open_doca_device_with_pci(pf_pci.c_str(), nullptr, &pf_dev.dev));
+	IF_SUCCESS(result, open_doca_device_with_pci(nic_info.pci.c_str(), nullptr, &pf_dev.dev));
 	IF_SUCCESS(result, doca_dpdk_port_probe(pf_dev.dev, dev_probe_str.c_str()));
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to probe device %s: %s", pf_pci.c_str(), doca_error_get_descr(result));
+		DOCA_LOG_ERR("Failed to probe device %s: %s", nic_info.pci.c_str(), doca_error_get_descr(result));
 		return result;
 	}
 
@@ -151,7 +150,7 @@ doca_error_t PSP_GatewayFlows::init_dev(void)
 		pf_dev.local_pip_str = ipv6_to_string(pf_dev.local_pip.ipv6_addr);
 	}
 
-	DOCA_LOG_INFO("Probed PF %s, VF %s on PCI %s", pf_dev.pf_mac_str.c_str(), pf_dev.vf_mac_str.c_str(), pf_pci.c_str());
+	DOCA_LOG_INFO("Probed PF %s, VF %s on PCI %s", pf_dev.pf_mac_str.c_str(), pf_dev.vf_mac_str.c_str(), nic_info.pci.c_str());
 	return result;
 }
 

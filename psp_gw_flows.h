@@ -130,12 +130,11 @@ class PSP_GatewayFlows {
 public:
 	/**
 	 * @brief Constructs the object. This operation cannot fail.
-	 * @param [in] pf_pci The PCI address of the PF device
-	 * @param [in] pf_repr_indices The indices of the PF device representors
+	 * @param [in] nic_info The NIC information
 	 * @param [in] app_config The application configuration
 	 * @param [in] crypto_id_start The starting index for crypto IDs.
 	 */
-	PSP_GatewayFlows(std::string pf_pci, std::string pf_repr_indices, psp_gw_app_config *app_config, uint32_t crypto_id_start);
+	PSP_GatewayFlows(psp_gw_nic_desc_t nic_info, psp_gw_app_config *app_config, uint32_t crypto_id_start);
 
 	/**
 	 * Deallocates all associated DOCA objects.
@@ -394,8 +393,7 @@ private:
 
 	// Input during init
 	psp_gw_app_config *app_config{};
-	std::string pf_pci;
-	std::string pf_repr_indices;
+	psp_gw_nic_desc_t nic_info;
 
 	// Queried state during init
 	psp_pf_dev pf_dev{};

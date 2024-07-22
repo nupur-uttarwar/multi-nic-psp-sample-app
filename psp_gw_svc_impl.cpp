@@ -59,7 +59,13 @@ PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, std::string pf_pci, 
 		DOCA_LOG_INFO("Selected psp_ver %d", config->net_config.default_psp_proto_ver);
 	}
 
-	psp_flows = std::make_unique<PSP_GatewayFlows>(pf_pci, repr_indices, config, 0);
+	uint32_t crypto_id = 0;
+	for (psp_gw_nic_desc_t nic : config->net_config.local_nics) {
+		psp_flows = std::make_unique<PSP_GatewayFlows>(nic, config, crypto_id);
+
+		crypto_id += config->crypto_ids_per_nic;
+	}
+	DOCA_LOG_INFO("%s", repr_indices.c_str());
 }
 
 doca_error_t PSP_GatewayImpl::request_tunnels_to_host(std::vector<psp_session_desc_t> session_descs)

@@ -69,6 +69,7 @@ void print_nic(std::string prefix, psp_gw_nic_desc_t nic)
 	std::string out = prefix + " NIC: \n";
 	out += "\thostname: " + nic.hostname + "\n";
 	out += "\tpci: " + nic.pci + "\n";
+	out += "\trepr: " + nic.repr + "\n";
 	out += "\tsvc_ip: " + ipv4_to_string(nic.svc_ip) + "\n";
 	out += "\tpip: " + nic.pip + "\n";
 	for (auto vip : nic.vips) {
