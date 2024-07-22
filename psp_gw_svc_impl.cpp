@@ -41,7 +41,7 @@ DOCA_LOG_REGISTER(PSP_GW_SVC);
 
 #define CHECK_ANY_FAILED(results) (std::any_of((results).begin(), (results).end(), [](int i) { return i != DOCA_SUCCESS; }))
 
-PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, std::string pf_pci, std::string repr_indices)
+PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config)
 	: config(config)
 {
 	config->crypto_ids_per_nic = config->max_tunnels + 1;
@@ -64,11 +64,12 @@ PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, std::string pf_pci, 
 		psp_flows.push_back({
 			nic.pip,
 			std::make_shared<PSP_GatewayFlows>(nic, config, crypto_id)
-	});
+		});
 
 		crypto_id += config->crypto_ids_per_nic;
 	}
-	DOCA_LOG_INFO("%s", repr_indices.c_str());
+
+	assert(psp_flows.size() > 0);
 }
 
 doca_error_t PSP_GatewayImpl::request_tunnels_to_host(std::vector<psp_session_desc_t> session_descs)
@@ -93,7 +94,6 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(std::vector<psp_session_de
 	for (size_t i = 0; i < session_descs.size(); i++) {
 		::psp_gateway::MultiTunnelRequest request;
 		::psp_gateway::SingleTunnelRequest *single_request = request.add_tunnels();
-		std::vector<spi_keyptr_t> egress_spi_keys;
 
 		psp_gw_nic_desc_t *remote_nic = lookup_nic(session_descs[i].remote_vip);
 		auto *stub = get_stub(remote_nic->svc_ip_str);
@@ -116,6 +116,8 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(std::vector<psp_session_de
 			spi_keyptr_t spi_key;
 			spi_key.spi = response.tunnels_params(0).spi();
 			spi_key.key = (void *)response.tunnels_params(0).encryption_key().c_str();
+
+			std::vector<spi_keyptr_t> egress_spi_keys;
 			egress_spi_keys.push_back(spi_key);
 			results = nic->set_egress_paths(session_descs, egress_spi_keys);
 			if (CHECK_ANY_FAILED(results)) {
@@ -462,6 +464,7 @@ PSP_GatewayImpl::lookup_nic(std::string vip_to_find)
 		}
 	}
 
+	assert(false);
 	return nullptr;
 }
 
@@ -481,5 +484,6 @@ PSP_GatewayImpl::lookup_flows(std::string local_vip)
 	}
 
 	DOCA_LOG_ERR("No flows found for local NIC %s", local_vip.c_str());
+	assert(false);
 	return nullptr;
 }

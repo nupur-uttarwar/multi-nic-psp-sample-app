@@ -63,7 +63,7 @@ public:
 	 *
 	 * @param [in] psp_flows The object which manages the doca resources.
 	 */
-	PSP_GatewayImpl(psp_gw_app_config *config, std::string pf_pci, std::string repr_indices);
+	PSP_GatewayImpl(psp_gw_app_config *config);
 
 	/**
 	 * @brief Returns a gRPC client for a given remote host

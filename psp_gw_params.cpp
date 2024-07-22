@@ -65,50 +65,6 @@ using psp_json_field_handlers = std::vector<psp_json_field_handler>;
 
 
 /**
- * @brief Configures the dst-mac to apply on decap
- *
- * @param [in]: the dst mac addr
- * @config [in/out]: A void pointer to the application config struct
- * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
- */
-static doca_error_t handle_pci_addr_param(void *param, void *config)
-{
-	auto *app_config = (struct psp_gw_app_config *)config;
-	const char *pci_addr = (const char *)param;
-
-	int pci_addr_len = strlen(pci_addr);
-	if (pci_addr_len + 1 != DOCA_DEVINFO_PCI_ADDR_SIZE && pci_addr_len + 1 != DOCA_DEVINFO_PCI_BDF_SIZE) {
-		DOCA_LOG_ERR("Expected PCI addr in DDDD:BB:DD.F or BB:DD.F format");
-		return DOCA_ERROR_INVALID_VALUE;
-	}
-
-	app_config->pf_pcie_addr = pci_addr;
-	for (char &c : app_config->pf_pcie_addr) {
-		c = tolower(c);
-	}
-
-	DOCA_LOG_INFO("Using %s for PF PCIe Addr", app_config->pf_pcie_addr.c_str());
-	return DOCA_SUCCESS;
-}
-
-/**
- * @brief Configures the dst-mac to apply on decap
- *
- * @param [in]: the dst mac addr
- * @config [in/out]: A void pointer to the application config struct
- * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
- */
-static doca_error_t handle_repr_param(void *param, void *config)
-{
-	auto *app_config = (struct psp_gw_app_config *)config;
-
-	app_config->pf_repr_indices = (char *)param;
-
-	DOCA_LOG_INFO("Device representor list: %s", app_config->pf_repr_indices.c_str());
-	return DOCA_SUCCESS;
-}
-
-/**
  * @brief Configures the DPDK eal_init Core mask parameter
  *
  * @param [in]: the core mask string
@@ -963,26 +919,6 @@ doca_error_t psp_gw_parse_config_file(psp_gw_app_config *app_config)
 static doca_error_t psp_gw_register_params(void)
 {
 	doca_error_t result;
-
-	result = psp_gw_register_single_param("p",
-					      "pci-addr",
-					      "PCI BDF of the device in BB:DD.F format (required)",
-					      handle_pci_addr_param,
-					      DOCA_ARGP_TYPE_STRING,
-					      true,
-					      false);
-	if (result != DOCA_SUCCESS)
-		return result;
-
-	result = psp_gw_register_single_param("r",
-					      "repr",
-					      "Device representor list in vf[x-y]pf[x-y] format (required)",
-					      handle_repr_param,
-					      DOCA_ARGP_TYPE_STRING,
-					      true,
-					      false);
-	if (result != DOCA_SUCCESS)
-		return result;
 
 	result = psp_gw_register_single_param("m",
 					      "core-mask",

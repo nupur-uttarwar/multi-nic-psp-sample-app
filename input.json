@@ -2,25 +2,23 @@
     "config": {},
     "hosts": [
         {
-            "hostname": "doca-vr-068",
-            "pci": "0000:26:00.0",
+            "hostname": "doca-vr-066",
+            "pci": "0000:8a:00.0",
             "repr": "pf0vf0",
-            "pip": "fe80::a288:c2ff:fe11:ee86",
-            "grpc-address": "10.137.189.68",
+            "pip": "fe80::966d:aeff:feaf:3fcc",
+            "grpc-address": "10.137.189.66",
             "vips": [
-                "60.0.0.68"
+                "60.0.0.66"
             ]
         },
         {
-            "hostname": "doca-vr-067",
-            "pci": "0000:26:00.0",
+            "hostname": "doca-vr-069",
+            "pci": "0000:8a:00.0",
             "repr": "pf0vf0",
-            "pip": "fe80::a288:c2ff:fe11:e494",
-            "grpc-address": "10.137.189.67",
+            "pip": "fe80::966d:aeff:fea9:b0b0",
+            "grpc-address": "10.137.189.69",
             "vips": [
-                "60.0.0.67",
-                "60.0.0.1",
-                "60.0.0.2"
+                "60.0.0.69"
             ]
         }
     ]

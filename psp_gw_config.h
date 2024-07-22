@@ -112,8 +112,6 @@ struct psp_gw_net_config {
 struct psp_gw_app_config {
 	struct application_dpdk_config dpdk_config; //!< Configuration details of DPDK ports and queues
 
-	std::string pf_pcie_addr;    //!< PCI domain:bus:device:function string of the host PF
-	std::string pf_repr_indices; //!< Representor list string, such  as vf0 or pf[0-1]
 	std::string core_mask;	     //!< EAL core mask
 
 	std::string local_svc_addr; //!< The IPv4 addr (and optional port number) of the locally running gRPC service.

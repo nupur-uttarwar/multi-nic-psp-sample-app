@@ -88,7 +88,6 @@ int main(int argc, char **argv)
 	app_config.dpdk_config.port_config.enable_mbuf_metadata = true;
 	app_config.dpdk_config.port_config.isolated_mode = true;
 	app_config.dpdk_config.reserve_main_thread = true;
-	app_config.pf_repr_indices = strdup("[0]");
 	app_config.core_mask = strdup("0x3");
 	app_config.max_tunnels = 128;
 	app_config.net_config.vc_enabled = false;
@@ -134,9 +133,9 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	// probe devices
-	PSP_GatewayImpl psp_svc(&app_config, app_config.pf_pcie_addr, app_config.pf_repr_indices);
+	PSP_GatewayImpl psp_svc(&app_config);
 
+	// probe devices
 	result = psp_svc.init_devs();
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to probe device");
