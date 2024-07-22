@@ -66,6 +66,11 @@ static const std::map<std::string, uint16_t> PSP_PERF_MAP = {
 	{PSP_PERF_ALL_STR, PSP_PERF_ALL},
 };
 
+static const uint32_t PSP_MAX_PEERS = 1 << 20; /* Maximum number of peers supported by the PSP Gateway. Currently only 1
+					   is supported. */
+static const uint32_t PSP_MAX_SESSIONS = 1;    /* Maximum number of sessions supported by the PSP Gateway for each host.
+						  Currently only 1 is supported. */
+
 static constexpr uint32_t IPV6_ADDR_LEN = 16;
 typedef uint8_t ipv6_addr_t[IPV6_ADDR_LEN];
 
@@ -87,11 +92,11 @@ struct psp_gw_host {
  *        in a network of PSP tunnel connections.
  */
 struct psp_gw_net_config {
-	std::vector<psp_gw_host> hosts; //!< The list of participating hosts and their interfaces
-
 	bool vc_enabled;		//!< Whether Virtualization Cookies shall be included in the PSP headers
 	uint32_t crypt_offset;		//!< The number of words to skip when performing encryption
 	uint32_t default_psp_proto_ver; /*!< 0 for 128-bit AES-GCM, 1 for 256-bit */
+
+	std::vector<psp_gw_host> hosts; //!< The list of participating hosts and their interfaces
 };
 
 /**
@@ -107,6 +112,7 @@ struct psp_gw_app_config {
 
 	std::string local_svc_addr; //!< The IPv4 addr (and optional port number) of the locally running gRPC service.
 	std::string local_vf_addr;  //!< The IPv4 IP address of the VF; required for create_tunnels_at_startup
+	std::string json_path;	    //!< The path to the JSON file containing the sessions configuration
 
 	rte_ether_addr dcap_dmac; //!< The dst mac to apply on decap
 

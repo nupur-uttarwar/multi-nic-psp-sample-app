@@ -129,17 +129,9 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	if (app_config.net_config.crypt_offset == UINT32_MAX) {
-		// If not specified by argp, select a default crypt_offset
-		app_config.net_config.crypt_offset =
-			app_config.net_config.vc_enabled ? DEFAULT_CRYPT_OFFSET_VC_ENABLED : DEFAULT_CRYPT_OFFSET;
-		DOCA_LOG_INFO("Selected crypt_offset of %d", app_config.net_config.crypt_offset);
-	}
-
-	if (app_config.net_config.default_psp_proto_ver == UINT32_MAX) {
-		// If not specified by argp, select a default PSP protocol version
-		app_config.net_config.default_psp_proto_ver = DEFAULT_PSP_VERSION;
-		DOCA_LOG_INFO("Selected psp_ver %d", app_config.net_config.default_psp_proto_ver);
+	result = psp_gw_parse_config_file(&app_config);
+	if (result != DOCA_SUCCESS) {
+		return EXIT_FAILURE;
 	}
 
 	// probe devices

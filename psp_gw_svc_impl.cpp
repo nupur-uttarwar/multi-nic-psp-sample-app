@@ -44,6 +44,21 @@ DOCA_LOG_REGISTER(PSP_GW_SVC);
 PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, std::string pf_pci, std::string repr_indices)
 	: config(config)
 {
+	config->crypto_ids_per_nic = config->max_tunnels + 1;
+
+	if (config->net_config.crypt_offset == UINT32_MAX) {
+		// If not specified by argp, select a default crypt_offset
+		config->net_config.crypt_offset =
+			config->net_config.vc_enabled ? DEFAULT_CRYPT_OFFSET_VC_ENABLED : DEFAULT_CRYPT_OFFSET;
+		DOCA_LOG_INFO("Selected crypt_offset of %d", config->net_config.crypt_offset);
+	}
+
+	if (config->net_config.default_psp_proto_ver == UINT32_MAX) {
+		// If not specified by argp, select a default PSP protocol version
+		config->net_config.default_psp_proto_ver = DEFAULT_PSP_VERSION;
+		DOCA_LOG_INFO("Selected psp_ver %d", config->net_config.default_psp_proto_ver);
+	}
+
 	psp_flows = std::make_unique<PSP_GatewayFlows>(pf_pci, repr_indices, config, 0);
 }
 
@@ -258,8 +273,15 @@ doca_error_t PSP_GatewayImpl::init_devs(void) {
 	doca_error_t result = DOCA_SUCCESS;
 	DOCA_LOG_INFO("Initializing PSP Gateway Devices");
 
-	IF_SUCCESS(result, psp_flows->init_dev());
+	const char *eal_args[] = {"", "-a00:00.0", "-c", config->core_mask.c_str()};
+	int n_eal_args = sizeof(eal_args) / sizeof(eal_args[0]);
+	int rc = rte_eal_init(n_eal_args, (char **)eal_args);
+	if (rc < 0) {
+		DOCA_LOG_ERR("EAL initialization failed: %d", rc);
+		return DOCA_ERROR_BAD_STATE;
+	}
 
+	IF_SUCCESS(result, psp_flows->init_dev());
 	return result;
 }
 

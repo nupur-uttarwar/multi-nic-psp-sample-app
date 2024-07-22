@@ -1,25 +1,15 @@
 {
-    "hosts": [
+    "config": {
+
+    },
+    "peers": [
         {
-            "host_name": "doca-vr-068",
-            "nics": [
+            "remote-grpc-address": "10.237.113.143",
+            "sessions": [
                 {
-                    "nic_pci": "26:00.0",
-                    "representor": "vf0",
-                    "virtual_ips": [
-                        "10.0.0.68"
-                    ]
-                }
-            ]
-        },
-        {
-            "host_name": "doca-vr-067",
-            "nics": [
-                {
-                    "nic_pci": "26:00.0",
-                    "representor": "vf0",
-                    "virtual_ips": [
-                        "10.0.0.67"
+                    // "local-vip": "60.0.0.68",
+                    "remote-vips": [
+                        "60.0.0.67"
                     ]
                 }
             ]
