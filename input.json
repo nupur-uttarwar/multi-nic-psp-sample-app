@@ -1,0 +1,28 @@
+{
+    "hosts": [
+        {
+            "host_name": "doca-vr-068",
+            "nics": [
+                {
+                    "nic_pci": "26:00.0",
+                    "representor": "vf0",
+                    "virtual_ips": [
+                        "10.0.0.68"
+                    ]
+                }
+            ]
+        },
+        {
+            "host_name": "doca-vr-067",
+            "nics": [
+                {
+                    "nic_pci": "26:00.0",
+                    "representor": "vf0",
+                    "virtual_ips": [
+                        "10.0.0.67"
+                    ]
+                }
+            ]
+        }
+    ]
+}

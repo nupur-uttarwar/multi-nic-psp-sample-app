@@ -135,6 +135,10 @@ public:
 
 private:
 
+	std::string lookup_remote_pip(std::string remote_vip);
+
+	doca_error_t request_tunnels_to_host(std::vector<psp_session_desc_t> session_desc);
+
 	/**
 	 * @brief Callback which is invoked to check the status of every entry
 	 *        added to a flow pipe. See doca_flow_entry_process_cb.
