@@ -798,18 +798,18 @@ static doca_error_t parse_grpc_address(json_object *json_obj_remote_addr,
 	struct psp_gw_nic_desc_t *host = (struct psp_gw_nic_desc_t *)data;
 
 	std::string svcaddr;
-	doca_error_t result = json_object_ver_get_string(json_obj_remote_addr, svcaddr);
+	doca_error_t result = json_object_ver_get_string(json_obj_remote_addr, host->svc_ip_str);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Invalid remote-grpc-address, expected string");
 		return result;
 	}
 
-	if (inet_pton(AF_INET, svcaddr.c_str(), &host->svc_ip) != 1) {
-		DOCA_LOG_ERR("Invalid svc IPv4 addr: %s", svcaddr.c_str());
+	if (inet_pton(AF_INET, host->svc_ip_str.c_str(), &host->svc_ip) != 1) {
+		DOCA_LOG_ERR("Invalid svc IPv4 addr: %s", host->svc_ip_str.c_str());
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 
-	DOCA_LOG_DBG("gRPC address: %s", svcaddr.c_str());
+	DOCA_LOG_DBG("gRPC address: %s", host->svc_ip_str.c_str());
 
 	return DOCA_SUCCESS;
 }

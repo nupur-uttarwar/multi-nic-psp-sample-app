@@ -135,7 +135,8 @@ public:
 
 private:
 
-	std::string lookup_remote_pip(std::string remote_vip);
+	psp_gw_nic_desc_t *lookup_nic(std::string vip);
+	std::shared_ptr<PSP_GatewayFlows> lookup_flows(std::string local_vip);
 
 	doca_error_t request_tunnels_to_host(std::vector<psp_session_desc_t> session_desc);
 
@@ -164,14 +165,15 @@ private:
 	// Application state data:
 	psp_gw_app_config *config{};
 
-	// Add to this when we have more than one PF
-	std::unique_ptr<PSP_GatewayFlows> psp_flows{};
+	// mapping of public IP to flows, used for flow lookup
+	using FlowNicPair = std::pair<std::string, std::shared_ptr<PSP_GatewayFlows>>;
+	std::vector<FlowNicPair> psp_flows;
 
 	// Used to uniquely populate the request ID in each NewTunnelRequest message.
 	uint64_t next_request_id{};
 
 	// map each svc_ip to an RPC object
-	std::map<std::string, std::unique_ptr<::psp_gateway::PSP_Gateway::Stub>> stubs;
+	std::map<std::string, std::shared_ptr<::psp_gateway::PSP_Gateway::Stub>> stubs;
 
 	std::vector<struct lcore_params> lcore_params_list;
 };

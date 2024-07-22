@@ -61,7 +61,10 @@ PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, std::string pf_pci, 
 
 	uint32_t crypto_id = 0;
 	for (psp_gw_nic_desc_t nic : config->net_config.local_nics) {
-		psp_flows = std::make_unique<PSP_GatewayFlows>(nic, config, crypto_id);
+		psp_flows.push_back({
+			nic.pip,
+			std::make_shared<PSP_GatewayFlows>(nic, config, crypto_id)
+	});
 
 		crypto_id += config->crypto_ids_per_nic;
 	}
@@ -72,8 +75,11 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(std::vector<psp_session_de
 {
 	std::vector<doca_error_t> results;
 
-	// TODO select relevant NIC here, based on the local_vip
-	PSP_GatewayFlows *nic = psp_flows.get();
+	std::shared_ptr<PSP_GatewayFlows> nic = lookup_flows(session_descs[0].local_vip);
+	if (nic == nullptr) {
+		DOCA_LOG_ERR("No NIC found for local VIP %s", session_descs[0].local_vip.c_str());
+		return DOCA_ERROR_BAD_STATE;
+	}
 
 	std::vector<spi_key_t> ingress_spi_keys;
 	results = nic->create_ingress_paths(session_descs, ingress_spi_keys);
@@ -89,7 +95,8 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(std::vector<psp_session_de
 		::psp_gateway::SingleTunnelRequest *single_request = request.add_tunnels();
 		std::vector<spi_keyptr_t> egress_spi_keys;
 
-		auto *stub = get_stub("TODO REMOTE SVC IP");
+		psp_gw_nic_desc_t *remote_nic = lookup_nic(session_descs[i].remote_vip);
+		auto *stub = get_stub(remote_nic->svc_ip_str);
 
 		single_request->set_virt_src_ip(session_descs[i].local_vip);
 		single_request->set_virt_dst_ip(session_descs[i].remote_vip);
@@ -140,7 +147,12 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 	psp_session_desc_t session_desc;
 	session_desc.local_vip = ipv4_to_string(ipv4_hdr->src_addr);
 	session_desc.remote_vip = ipv4_to_string(ipv4_hdr->dst_addr);
-	session_desc.remote_pip = lookup_remote_pip(session_desc.remote_vip);;
+	psp_gw_nic_desc_t *remote_nic = lookup_nic(session_desc.remote_vip);
+	if (remote_nic == nullptr) {
+		DOCA_LOG_ERR("No NIC found for remote VIP %s", session_desc.remote_vip.c_str());
+		return DOCA_ERROR_BAD_STATE;
+	}
+	session_desc.remote_pip = remote_nic->pip;
 
 	session_descs.push_back(session_desc);
 	doca_error_t result = request_tunnels_to_host(session_descs);
@@ -174,8 +186,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 		egress_spi_keys.push_back(spi_key);
 	}
 
-	// TODO: select relevant NIC here, based on the request
-	PSP_GatewayFlows *nic = psp_flows.get();
+	std::shared_ptr<PSP_GatewayFlows> nic = lookup_flows(relevant_sessions[0].local_vip);
 
 	std::vector<doca_error_t> results;
 	results = nic->set_egress_paths(relevant_sessions, egress_spi_keys);
@@ -287,7 +298,9 @@ doca_error_t PSP_GatewayImpl::init_devs(void) {
 		return DOCA_ERROR_BAD_STATE;
 	}
 
-	IF_SUCCESS(result, psp_flows->init_dev());
+	for (auto &pair : psp_flows) {
+		IF_SUCCESS(result, pair.second->init_dev());
+	}
 	return result;
 }
 
@@ -295,7 +308,9 @@ doca_error_t PSP_GatewayImpl::init_flows(void) {
 	doca_error_t result = DOCA_SUCCESS;
 
 	IF_SUCCESS(result, init_doca_flow());
-	IF_SUCCESS(result, psp_flows->init_flows());
+	for (auto &pair : psp_flows) {
+		IF_SUCCESS(result, pair.second->init_flows());
+	}
 
 	return result;
 }
@@ -416,8 +431,55 @@ void PSP_GatewayImpl::fill_tunnel_params(uint32_t *key, uint32_t spi, std::strin
 	params->set_mac_addr("aa:bb:cc:dd:ee:ff");
 }
 
-std::string PSP_GatewayImpl::lookup_remote_pip(std::string remote_vip)
+psp_gw_nic_desc_t *
+PSP_GatewayImpl::lookup_nic(std::string vip_to_find)
 {
-	// TODO look this up. This is functionally incorrect
-	return remote_vip;
+	struct psp_gw_net_config *net_config = &config->net_config;
+
+	// Search the cache for a quicker lookup
+	auto vip_nic_iter = net_config->vip_nic_lookup.find(vip_to_find);
+	if (vip_nic_iter != net_config->vip_nic_lookup.end()) {
+		return vip_nic_iter->second;
+	}
+
+	// Search the list of local nics
+	for (psp_gw_nic_desc_t &nic : net_config->local_nics) {
+		for (std::string &vip : nic.vips) {
+			if (vip == vip_to_find) {
+				net_config->vip_nic_lookup[vip_to_find] = &nic;
+				return &nic;
+			}
+		}
+	}
+
+	// Search the list of remote nics
+	for (psp_gw_nic_desc_t &nic : net_config->remote_nics) {
+		for (std::string &vip : nic.vips) {
+			if (vip == vip_to_find) {
+				net_config->vip_nic_lookup[vip_to_find] = &nic;
+				return &nic;
+			}
+		}
+	}
+
+	return nullptr;
+}
+
+std::shared_ptr<PSP_GatewayFlows>
+PSP_GatewayImpl::lookup_flows(std::string local_vip)
+{
+	struct psp_gw_nic_desc_t *nic = lookup_nic(local_vip);
+	if (nic == nullptr) {
+		DOCA_LOG_ERR("No NIC found for local VIP %s", local_vip.c_str());
+		return nullptr;
+	}
+
+	for (auto &pair : psp_flows) {
+		if (pair.first == nic->pip) {
+			return pair.second;
+		}
+	}
+
+	DOCA_LOG_ERR("No flows found for local NIC %s", local_vip.c_str());
+	return nullptr;
 }
