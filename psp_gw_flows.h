@@ -385,7 +385,10 @@ private:
 						 uint32_t *keys,
 						 uint32_t *spis);
 
+	doca_error_t add_encrypt_entry(const psp_session_desc_t &session, uint32_t spi, uint32_t crypto_id, doca_flow_pipe_entry **new_entry);
+
 	doca_error_t set_egress_path(const psp_session_desc_t &session, const spi_keyptr_t &spi_key);
+	void format_encap_data_ipv6(const psp_session_desc_t &session, uint32_t spi, uint8_t *encap_data);
 
 	bool sampling_enabled (void) {
 		return app_config->log2_sample_rate > 0;

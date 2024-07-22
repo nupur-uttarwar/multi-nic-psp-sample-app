@@ -278,6 +278,7 @@ doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session
 	psp_session_egress_t new_session = {};
 	doca_error_t result = DOCA_SUCCESS;
 	bool update_existing_session = egress_sessions.find(session) != egress_sessions.end();
+	struct doca_flow_shared_resource_cfg res_cfg = {};
 	uint32_t old_crypto_id = UINT32_MAX;
 
 	if (update_existing_session) {
@@ -292,18 +293,25 @@ doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session
 	}
 
 	// Bind key to the crypto id
-	// todo, doca_flow_crypto_bind
+	res_cfg.domain = DOCA_FLOW_PIPE_DOMAIN_SECURE_EGRESS;
+	res_cfg.psp_cfg.key_cfg.key_type = app_config->net_config.default_psp_proto_ver == 0 ? DOCA_FLOW_CRYPTO_KEY_128 : DOCA_FLOW_CRYPTO_KEY_256;
+	res_cfg.psp_cfg.key_cfg.key = (uint32_t *)spi_key.key;
+
+	result = doca_flow_shared_resource_set_cfg(DOCA_FLOW_SHARED_RESOURCE_PSP, new_crypto_id, &res_cfg);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to configure crypto_id %d: %s", new_crypto_id, doca_error_get_descr(result));
+		goto cleanup;
+	}
 
 	if (update_existing_session) {
 		// todo, doca_flow_update_entry helper
 	} else {
-		// todo, doca_flow_add_entry_helper
+		result = add_encrypt_entry(session, spi_key.spi, new_crypto_id, &new_session.encap_encrypt_entry);
 	}
 
 	// Update the session to reflect the new state
 	new_session.crypto_id = new_crypto_id;
-	new_session.encap_encrypt_entry = nullptr; // todo
-	new_session.pkt_count_egress = 0;
+	new_session.pkt_count_egress = UINT64_MAX;
 	egress_sessions[session] = new_session;
 
 	DOCA_LOG_INFO("Created egress path with SPI %lu", spi_key.spi);
@@ -1176,4 +1184,128 @@ doca_error_t PSP_GatewayFlows::generate_keys_spis(uint32_t key_len_bits,
 	doca_flow_crypto_psp_spi_key_bulk_free(bulk_key_gen);
 
 	return DOCA_SUCCESS;
+}
+
+void PSP_GatewayFlows::format_encap_data_ipv6(const psp_session_desc_t &session, uint32_t spi, uint8_t *encap_data)
+{
+	static const doca_be32_t DEFAULT_VTC_FLOW = 0x6 << 28;
+
+	auto *encap_hdr = (eth_ipv6_psp_tunnel_hdr *)encap_data;
+
+	encap_hdr->eth.ether_type = RTE_BE16(RTE_ETHER_TYPE_IPV6);
+	encap_hdr->ip.vtc_flow = RTE_BE32(DEFAULT_VTC_FLOW);
+	encap_hdr->ip.proto = IPPROTO_UDP;
+	encap_hdr->ip.hop_limits = 50;
+	encap_hdr->udp.src_port = 0x0; // computed
+	encap_hdr->udp.dst_port = RTE_BE16(DOCA_FLOW_PSP_DEFAULT_PORT);
+	encap_hdr->psp.nexthdr = 4;
+	encap_hdr->psp.hdrextlen = (uint8_t)(app_config->net_config.vc_enabled ? 2 : 1);
+	encap_hdr->psp.res_cryptofst = (uint8_t)app_config->net_config.crypt_offset;
+	encap_hdr->psp.spi = RTE_BE32(spi);
+	// encap_hdr->psp_virt_cookie = RTE_BE64(session->vc);
+	encap_hdr->psp_virt_cookie = 0x778899aabbccddee;
+
+	encap_hdr->psp.rsrv1 = 1; // always 1
+	encap_hdr->psp.ver = app_config->net_config.default_psp_proto_ver;
+	encap_hdr->psp.v = !!app_config->net_config.vc_enabled;
+	// encap_hdr->psp.s will be set by the egress_sampling pipe
+
+	memcpy(encap_hdr->eth.src_addr.addr_bytes, pf_dev.pf_mac.addr_bytes, RTE_ETHER_ADDR_LEN);
+	memcpy(encap_hdr->ip.src_addr, pf_dev.local_pip.ipv6_addr, IPV6_ADDR_LEN);
+	memcpy(encap_hdr->eth.dst_addr.addr_bytes, &nic_info.nexthop_mac, RTE_ETHER_ADDR_LEN);
+
+	if (inet_pton(AF_INET6, session.remote_pip.c_str(), &encap_hdr->ip.dst_addr) != 1) {
+		DOCA_LOG_ERR("Failed to convert remote_vip %s to IPv6", session.remote_pip.c_str());
+		return;
+	}
+}
+
+// void PSP_GatewayFlows::format_encap_data_ipv4(const psp_session_egress_t *session, uint32_t spi, uint8_t *encap_data)
+// {
+// 	auto *encap_hdr = (eth_ipv4_psp_tunnel_hdr *)encap_data;
+
+// 	encap_hdr->eth.ether_type = RTE_BE16(RTE_ETHER_TYPE_IPV4);
+// 	encap_hdr->udp.src_port = 0x0; // computed
+// 	encap_hdr->udp.dst_port = RTE_BE16(DOCA_FLOW_PSP_DEFAULT_PORT);
+// 	encap_hdr->psp.nexthdr = 4;
+// 	encap_hdr->psp.hdrextlen = (uint8_t)(app_config->net_config.vc_enabled ? 2 : 1);
+// 	encap_hdr->psp.res_cryptofst = (uint8_t)app_config->net_config.crypt_offset;
+// 	encap_hdr->psp.spi = RTE_BE32(spi);
+// 	encap_hdr->psp_virt_cookie = RTE_BE64(session->vc);
+
+// 	const auto &dmac = app_config->nexthop_enable ? app_config->nexthop_dmac : session->dst_mac;
+// 	memcpy(encap_hdr->eth.dst_addr.addr_bytes, dmac.addr_bytes, RTE_ETHER_ADDR_LEN); // todo
+// 	memcpy(encap_hdr->eth.src_addr.addr_bytes, pf_dev.pf_mac.addr_bytes, RTE_ETHER_ADDR_LEN);
+// 	encap_hdr->ip.src_addr = pf_dev->src_pip.ipv4_addr;
+// 	encap_hdr->ip.dst_addr = session->dst_pip.ipv4_addr;
+// 	encap_hdr->ip.version_ihl = 0x45;
+// 	encap_hdr->ip.next_proto_id = IPPROTO_UDP;
+
+// 	encap_hdr->psp.rsrv1 = 1; // always 1
+// 	encap_hdr->psp.ver = session->psp_proto_ver;
+// 	encap_hdr->psp.v = !!app_config->net_config.vc_enabled;
+// 	// encap_hdr->psp.s will be set by the egress_sampling pipe
+// }
+
+doca_error_t PSP_GatewayFlows::add_encrypt_entry(const psp_session_desc_t &session, uint32_t spi, uint32_t crypto_id, doca_flow_pipe_entry **entry)
+{
+	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
+	doca_error_t result = DOCA_SUCCESS;
+
+	DOCA_LOG_DBG("Creating encrypt flow entry: dst_pip %s, dst_vip %s, SPI %d, crypto_id %d",
+		     session.remote_pip.c_str(),
+		     session.local_vip.c_str(),
+		     spi,
+		     crypto_id);
+
+	doca_flow_match encap_encrypt_match = {};
+	encap_encrypt_match.parser_meta.outer_l3_type = DOCA_FLOW_L3_META_IPV4;
+	encap_encrypt_match.outer.l3_type = DOCA_FLOW_L3_TYPE_IP4;
+	if (inet_pton(AF_INET, session.remote_vip.c_str(), &encap_encrypt_match.outer.ip4.dst_ip) != 1) {
+		DOCA_LOG_ERR("Failed to convert remote_vip %s to IPv4", session.remote_vip.c_str());
+		return DOCA_ERROR_BAD_STATE;
+	}
+
+	doca_flow_actions encap_actions = {};
+	encap_actions.has_crypto_encap = true;
+	encap_actions.crypto_encap.action_type = DOCA_FLOW_CRYPTO_REFORMAT_ENCAP;
+	encap_actions.crypto_encap.net_type = DOCA_FLOW_CRYPTO_HEADER_PSP_TUNNEL;
+	encap_actions.crypto_encap.icv_size = PSP_ICV_SIZE;
+	// if (session->dst_pip.type == DOCA_FLOW_L3_TYPE_IP6) {
+	if (true) {
+		encap_actions.crypto_encap.data_size = sizeof(eth_ipv6_psp_tunnel_hdr);
+		encap_actions.action_idx = 0;
+	} else {
+		encap_actions.crypto_encap.data_size = sizeof(eth_ipv4_psp_tunnel_hdr);
+		encap_actions.action_idx = 1;
+	}
+
+	if (!app_config->net_config.vc_enabled) {
+		encap_actions.crypto_encap.data_size -= sizeof(uint64_t);
+	}
+	if (true)
+	// if (session->dst_pip.type == DOCA_FLOW_L3_TYPE_IP6)
+		format_encap_data_ipv6(session, spi, encap_actions.crypto_encap.encap_data);
+	// else
+	// 	format_encap_data_ipv4(session, spi, encap_actions.crypto_encap.encap_data);
+
+	encap_actions.crypto.action_type = DOCA_FLOW_CRYPTO_ACTION_ENCRYPT;
+	encap_actions.crypto.resource_type = DOCA_FLOW_CRYPTO_RESOURCE_PSP;
+	encap_actions.crypto.crypto_id = crypto_id;
+
+	result = add_single_entry(0,
+				  egress_acl_pipe,
+				  pf_dev.pf_port,
+				  &encap_encrypt_match,
+				  &encap_actions,
+				  nullptr,
+				  nullptr,
+				  entry);
+
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to add encrypt_encap pipe entry: %s", doca_error_get_descr(result));
+		return result;
+	}
+
+	return result;
 }
