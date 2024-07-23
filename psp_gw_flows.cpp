@@ -268,10 +268,15 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 
 		doca_error_t result = DOCA_SUCCESS;
 		if (expiring_entry) {
-			remove_single_entry(expiring_entry);
+			result = remove_single_entry(expiring_entry);
 			DOCA_LOG_INFO("Removing expired ingress path");
 		}
-		assert(ingress_sessions[session].ingress_acl_entry);
+
+		// In case we added an ingress ACL entry, then the remote side did not succeed,
+		// we have no ingress entries and we need to remove the ingress session altogether
+		if (!ingress_sessions[session].ingress_acl_entry) {
+			ingress_sessions.erase(session);
+		}
 		results.push_back(result);
 	}
 
