@@ -59,7 +59,7 @@ static doca_error_t execute_psp_flow_create_loop(size_t loops, PSP_GatewayFlows 
 		session.dst_vip = RTE_BE32(i + 0xA0A0B000);
 		session.crypto_id = i + 1;
 		session.vc = 0x8000000000000000 + (i << 32) + i;
-		result = psp_flows->add_encrypt_entry(&session, encrypt_key);
+		result = psp_flows->config_encrypt_entry(&session, encrypt_key);
 
 		if (result != DOCA_SUCCESS) {
 			DOCA_LOG_ERR("PSP Encrypt Flow creation failed: %s", doca_error_get_descr(result));

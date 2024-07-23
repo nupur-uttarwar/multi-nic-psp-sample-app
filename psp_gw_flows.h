@@ -385,7 +385,26 @@ private:
 						 uint32_t *keys,
 						 uint32_t *spis);
 
-	doca_error_t add_encrypt_entry(const psp_session_desc_t &session, uint32_t spi, uint32_t crypto_id, doca_flow_pipe_entry **new_entry);
+	/**
+	 * @brief Adds an ingress ACL entry for the given session to accept
+	 *        the combination of src_vip and SPI.
+	 *
+	 * @session [in]: the session for which an ingress ACL flow should be created
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t add_ingress_acl_entry(const psp_session_desc_t &session, uint32_t spi, doca_flow_pipe_entry **entry);
+
+	doca_error_t update_single_entry(uint16_t pipe_queue,
+						doca_flow_pipe *pipe,
+						const doca_flow_match *match,
+						const doca_flow_actions *actions,
+						const doca_flow_monitor *mon,
+						const doca_flow_fwd *fwd,
+						doca_flow_pipe_entry *entry);
+
+	doca_error_t remove_single_entry(doca_flow_pipe_entry **entry);
+
+	doca_error_t config_encrypt_entry(const psp_session_desc_t &session, uint32_t spi, uint32_t crypto_id, doca_flow_pipe_entry **new_entry);
 
 	doca_error_t set_egress_path(const psp_session_desc_t &session, const spi_keyptr_t &spi_key);
 	void format_encap_data_ipv6(const psp_session_desc_t &session, uint32_t spi, uint8_t *encap_data);

@@ -221,23 +221,23 @@ std::vector<doca_error_t> PSP_GatewayFlows::create_ingress_paths(
 		auto &spi_key = spi_keys[i];
 
 		bool update_existing_session = ingress_sessions.find(session) != ingress_sessions.end();
-
 		assert(!(session.local_vip.empty() || session.remote_vip.empty() || session.remote_pip.empty()));
-
-		// todo, DOCA helper that creates a new ingress ACL entry with SPI and key
-		DOCA_LOG_INFO("Opening SPI %lu", spi_key.spi);
 
 		psp_session_ingress_t new_session = {};
 		new_session.ingress_acl_entry = nullptr;
-		new_session.pkt_count_ingress = 0;
+		new_session.pkt_count_ingress = UINT64_MAX;
 		if (update_existing_session) {
 			new_session.expiring_ingress_acl_entry = ingress_sessions[session].ingress_acl_entry;
 		}
-		ingress_sessions[session] = new_session;
 
-		results.push_back(DOCA_SUCCESS);
+		result = add_ingress_acl_entry(session, spi_key.spi, &new_session.ingress_acl_entry);
+		if (result == DOCA_SUCCESS) {
+			ingress_sessions[session] = new_session;
+		}
+		results.push_back(result);
 	}
 
+	assert(results.size() == sessions.size());
 	return results;
 }
 
@@ -247,29 +247,28 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 {
 	DOCA_LOG_INFO("Deleting ingress paths");
 
-	std::vector<doca_error_t> result;
+	std::vector<doca_error_t> results;
 	for (size_t i = 0; i < sessions.size(); ++i) {
 		const psp_session_desc_t &session = sessions[i];
 		bool exp_old = expire_old[i];
 
 		assert(!(session.local_vip.empty() || session.remote_vip.empty() || session.remote_pip.empty()));
 
-		doca_flow_pipe_entry *expiring_entry = nullptr;
+		doca_flow_pipe_entry **expiring_entry = nullptr;
 		if (exp_old) {
-			expiring_entry = ingress_sessions[session].expiring_ingress_acl_entry;
+			expiring_entry = &ingress_sessions[session].expiring_ingress_acl_entry;
 		} else {
-			expiring_entry = ingress_sessions[session].ingress_acl_entry;
+			expiring_entry = &ingress_sessions[session].ingress_acl_entry;
 			ingress_sessions[session].ingress_acl_entry = ingress_sessions[session].expiring_ingress_acl_entry;
 		}
 		ingress_sessions[session].expiring_ingress_acl_entry = nullptr;
 
-		// todo call remove pipe entry helper on expiring_entry
-		DOCA_LOG_INFO("Closing %s ingress entry %p", exp_old ? "old" : "new", expiring_entry);
-
-		result.push_back(DOCA_SUCCESS);
+		doca_error_t result = remove_single_entry(expiring_entry);
+		results.push_back(result);
 	}
 
-	return result;
+	assert(results.size() == sessions.size());
+	return results;
 }
 
 doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session, const spi_keyptr_t &spi_key) {
@@ -285,6 +284,7 @@ doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session
 
 	if (update_existing_session) {
 		old_crypto_id = egress_sessions[session].crypto_id;
+		new_session.encap_encrypt_entry = egress_sessions[session].encap_encrypt_entry;
 	}
 
 	new_session.crypto_id = allocate_crypto_id();
@@ -307,8 +307,9 @@ doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session
 
 	if (update_existing_session) {
 		// todo, doca_flow_update_entry helper
+		result = config_encrypt_entry(session, spi_key.spi, new_session.crypto_id, &new_session.encap_encrypt_entry);
 	} else {
-		result = add_encrypt_entry(session, spi_key.spi, new_session.crypto_id, &new_session.encap_encrypt_entry);
+		result = config_encrypt_entry(session, spi_key.spi, new_session.crypto_id, &new_session.encap_encrypt_entry);
 	}
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to %s encrypt entry: %s", update_existing_session ? "update" : "add", doca_error_get_descr(result));
@@ -322,7 +323,7 @@ doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session
 
 cleanup:
 	if (update_existing_session) {
-		release_crypto_id(result == DOCA_SUCCESS ? old_crypto_id : new_crypto_id);
+		release_crypto_id(result == DOCA_SUCCESS ? old_crypto_id : new_session.crypto_id);
 	}
 
 	return result;
@@ -447,6 +448,40 @@ doca_error_t PSP_GatewayFlows::bind_shared_resources(void)
 						   psp_ids2,
 						   available_crypto_ids.size(),
 						   pf_dev.pf_port));
+
+	return result;
+}
+
+doca_error_t PSP_GatewayFlows::update_single_entry(uint16_t pipe_queue,
+						doca_flow_pipe *pipe,
+						const doca_flow_match *match,
+						const doca_flow_actions *actions,
+						const doca_flow_monitor *mon,
+						const doca_flow_fwd *fwd,
+						doca_flow_pipe_entry *entry)
+{
+	int num_of_entries = 1;
+	struct entries_status status = {};
+	status.entries_in_queue = num_of_entries;
+
+	doca_error_t result = doca_flow_pipe_update_entry(0, pipe, actions, mon, fwd, DOCA_FLOW_NO_WAIT, entry);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to update encrypt_encap pipe entry: %s", doca_error_get_descr(result));
+		return result;
+	}
+
+	result = doca_flow_entries_process(pf_dev.pf_port, 0, DEFAULT_TIMEOUT_US, num_of_entries);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to process entry: %s", doca_error_get_descr(result));
+		return result;
+	}
+
+	if (status.nb_processed != num_of_entries || status.failure) {
+		DOCA_LOG_ERR("Failed to process entry; nb_processed = %d, failure = %d",
+			     status.nb_processed,
+			     status.failure);
+		return DOCA_ERROR_BAD_STATE;
+	}
 
 	return result;
 }
@@ -1251,10 +1286,13 @@ void PSP_GatewayFlows::format_encap_data_ipv6(const psp_session_desc_t &session,
 // 	// encap_hdr->psp.s will be set by the egress_sampling pipe
 // }
 
-doca_error_t PSP_GatewayFlows::add_encrypt_entry(const psp_session_desc_t &session, uint32_t spi, uint32_t crypto_id, doca_flow_pipe_entry **entry)
+doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &session, uint32_t spi, uint32_t crypto_id, doca_flow_pipe_entry **entry)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
 	doca_error_t result = DOCA_SUCCESS;
+
+	// If we receive a non-NULL entry, instead of creating a new entry, we just update the old one in-place
+	bool update_entry = *entry == NULL;
 
 	DOCA_LOG_DBG("Creating encrypt flow entry: dst_pip %s, dst_vip %s, SPI %d, crypto_id %d",
 		     session.remote_pip.c_str(),
@@ -1275,8 +1313,9 @@ doca_error_t PSP_GatewayFlows::add_encrypt_entry(const psp_session_desc_t &sessi
 	encap_actions.crypto_encap.action_type = DOCA_FLOW_CRYPTO_REFORMAT_ENCAP;
 	encap_actions.crypto_encap.net_type = DOCA_FLOW_CRYPTO_HEADER_PSP_TUNNEL;
 	encap_actions.crypto_encap.icv_size = PSP_ICV_SIZE;
-	// if (session->dst_pip.type == DOCA_FLOW_L3_TYPE_IP6) {
+
 	if (true) {
+	// if (session->dst_pip.type == DOCA_FLOW_L3_TYPE_IP6) { // todo
 		encap_actions.crypto_encap.data_size = sizeof(eth_ipv6_psp_tunnel_hdr);
 		encap_actions.action_idx = 0;
 	} else {
@@ -1288,7 +1327,7 @@ doca_error_t PSP_GatewayFlows::add_encrypt_entry(const psp_session_desc_t &sessi
 		encap_actions.crypto_encap.data_size -= sizeof(uint64_t);
 	}
 	if (true)
-	// if (session->dst_pip.type == DOCA_FLOW_L3_TYPE_IP6)
+	// if (session->dst_pip.type == DOCA_FLOW_L3_TYPE_IP6) // todo
 		format_encap_data_ipv6(session, spi, encap_actions.crypto_encap.encap_data);
 	// else
 	// 	format_encap_data_ipv4(session, spi, encap_actions.crypto_encap.encap_data);
@@ -1297,19 +1336,74 @@ doca_error_t PSP_GatewayFlows::add_encrypt_entry(const psp_session_desc_t &sessi
 	encap_actions.crypto.resource_type = DOCA_FLOW_CRYPTO_RESOURCE_PSP;
 	encap_actions.crypto.crypto_id = crypto_id;
 
-	result = add_single_entry(0,
-				  egress_acl_pipe,
-				  pf_dev.pf_port,
-				  &encap_encrypt_match,
-				  &encap_actions,
-				  nullptr,
-				  nullptr,
-				  entry);
+	if (update_entry) {
+
+	}
+	else {
+		result = add_single_entry(0,
+					egress_acl_pipe,
+					pf_dev.pf_port,
+					&encap_encrypt_match,
+					&encap_actions,
+					nullptr,
+					nullptr,
+					entry);
+	}
 
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to add encrypt_encap pipe entry: %s", doca_error_get_descr(result));
 		return result;
 	}
 
+	return result;
+}
+
+doca_error_t PSP_GatewayFlows::add_ingress_acl_entry(const psp_session_desc_t &session, uint32_t spi, doca_flow_pipe_entry **entry)
+{
+	if (app_config->disable_ingress_acl) {
+		DOCA_LOG_ERR("Cannot insert ingress ACL flow; disabled");
+		return DOCA_ERROR_BAD_STATE;
+	}
+
+	doca_flow_match match = {};
+	match.parser_meta.psp_syndrome = 0;
+	match.tun.type = DOCA_FLOW_TUN_PSP;
+	match.tun.psp.spi = RTE_BE32(spi);
+	match.inner.l3_type = DOCA_FLOW_L3_TYPE_IP4;
+	if (inet_pton(AF_INET, session.remote_vip.c_str(), &match.inner.ip4.src_ip) != 1) {
+		DOCA_LOG_ERR("Failed to convert remote_vip %s to IPv4", session.remote_vip.c_str());
+		return DOCA_ERROR_BAD_STATE;
+	}
+
+	doca_error_t result = DOCA_SUCCESS;
+	IF_SUCCESS(result,
+		   add_single_entry(0,
+				    ingress_acl_pipe,
+				    pf_dev.pf_port,
+				    &match,
+				    nullptr,
+				    nullptr,
+				    nullptr,
+				    entry));
+
+	return result;
+}
+
+doca_error_t PSP_GatewayFlows::remove_single_entry(doca_flow_pipe_entry **entry)
+{
+	doca_error_t result = DOCA_SUCCESS;
+	assert(entry);
+
+	result = doca_flow_pipe_remove_entry(0, DOCA_FLOW_NO_WAIT, *entry);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_INFO("Error removing entry from SW: %s", doca_error_get_descr(result));
+		return result;
+	}
+	*entry = NULL;
+
+	result = doca_flow_entries_process(pf_dev.pf_port, 0, DEFAULT_TIMEOUT_US, 1);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Error removing entry from HW: %s", doca_error_get_descr(result));
+	}
 	return result;
 }
