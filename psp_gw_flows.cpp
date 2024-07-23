@@ -275,18 +275,20 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session, const spi_keyptr_t &spi_key) {
 	assert(!(session.local_vip.empty() || session.remote_vip.empty() || session.remote_pip.empty()));
 
-	psp_session_egress_t new_session = {};
 	doca_error_t result = DOCA_SUCCESS;
 	bool update_existing_session = egress_sessions.find(session) != egress_sessions.end();
 	struct doca_flow_shared_resource_cfg res_cfg = {};
 	uint32_t old_crypto_id = UINT32_MAX;
+	psp_session_egress_t new_session = {};
+
+	new_session.pkt_count_egress = UINT64_MAX;
 
 	if (update_existing_session) {
 		old_crypto_id = egress_sessions[session].crypto_id;
 	}
 
-	uint32_t new_crypto_id = allocate_crypto_id();
-	if (new_crypto_id == UINT32_MAX) {
+	new_session.crypto_id = allocate_crypto_id();
+	if (new_session.crypto_id == UINT32_MAX) {
 		DOCA_LOG_ERR("Failed to allocate crypto id");
 		result = DOCA_ERROR_NO_MEMORY;
 		goto cleanup;
@@ -297,21 +299,23 @@ doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session
 	res_cfg.psp_cfg.key_cfg.key_type = app_config->net_config.default_psp_proto_ver == 0 ? DOCA_FLOW_CRYPTO_KEY_128 : DOCA_FLOW_CRYPTO_KEY_256;
 	res_cfg.psp_cfg.key_cfg.key = (uint32_t *)spi_key.key;
 
-	result = doca_flow_shared_resource_set_cfg(DOCA_FLOW_SHARED_RESOURCE_PSP, new_crypto_id, &res_cfg);
+	result = doca_flow_shared_resource_set_cfg(DOCA_FLOW_SHARED_RESOURCE_PSP, new_session.crypto_id, &res_cfg);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to configure crypto_id %d: %s", new_crypto_id, doca_error_get_descr(result));
+		DOCA_LOG_ERR("Failed to configure crypto_id %d: %s", new_session.crypto_id, doca_error_get_descr(result));
 		goto cleanup;
 	}
 
 	if (update_existing_session) {
 		// todo, doca_flow_update_entry helper
 	} else {
-		result = add_encrypt_entry(session, spi_key.spi, new_crypto_id, &new_session.encap_encrypt_entry);
+		result = add_encrypt_entry(session, spi_key.spi, new_session.crypto_id, &new_session.encap_encrypt_entry);
+	}
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to %s encrypt entry: %s", update_existing_session ? "update" : "add", doca_error_get_descr(result));
+		goto cleanup;
 	}
 
 	// Update the session to reflect the new state
-	new_session.crypto_id = new_crypto_id;
-	new_session.pkt_count_egress = UINT64_MAX;
 	egress_sessions[session] = new_session;
 
 	DOCA_LOG_INFO("Created egress path with SPI %lu", spi_key.spi);
