@@ -328,12 +328,9 @@ doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session
 		goto cleanup;
 	}
 
-	if (update_existing_session) {
-		// todo, doca_flow_update_entry helper
-		result = config_encrypt_entry(session, spi_key.spi, new_session.crypto_id, &new_session.encap_encrypt_entry);
-	} else {
-		result = config_encrypt_entry(session, spi_key.spi, new_session.crypto_id, &new_session.encap_encrypt_entry);
-	}
+	// Note: If there is no current entry, we will create a new one. If there is an
+	//       existing entry, we will update it with the new SPI and crypto id
+	result = config_encrypt_entry(session, spi_key.spi, new_session.crypto_id, &new_session.encap_encrypt_entry);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to %s encrypt entry: %s", update_existing_session ? "update" : "add", doca_error_get_descr(result));
 		goto cleanup;
@@ -1259,8 +1256,8 @@ void PSP_GatewayFlows::format_encap_data_ipv6(const psp_session_desc_t &session,
 	// encap_hdr->psp.s will be set by the egress_sampling pipe
 
 	memcpy(encap_hdr->eth.src_addr.addr_bytes, pf_dev.pf_mac.addr_bytes, RTE_ETHER_ADDR_LEN);
-	memcpy(encap_hdr->ip.src_addr, pf_dev.local_pip.ipv6_addr, IPV6_ADDR_LEN);
 	memcpy(encap_hdr->eth.dst_addr.addr_bytes, &nic_info.nexthop_mac, RTE_ETHER_ADDR_LEN);
+	memcpy(encap_hdr->ip.src_addr, pf_dev.local_pip.ipv6_addr, IPV6_ADDR_LEN);
 
 	if (inet_pton(AF_INET6, session.remote_pip.c_str(), &encap_hdr->ip.dst_addr) != 1) {
 		DOCA_LOG_ERR("Failed to convert remote_vip %s to IPv6", session.remote_pip.c_str());
@@ -1268,38 +1265,43 @@ void PSP_GatewayFlows::format_encap_data_ipv6(const psp_session_desc_t &session,
 	}
 }
 
-// void PSP_GatewayFlows::format_encap_data_ipv4(const psp_session_egress_t *session, uint32_t spi, uint8_t *encap_data)
-// {
-// 	auto *encap_hdr = (eth_ipv4_psp_tunnel_hdr *)encap_data;
+void PSP_GatewayFlows::format_encap_data_ipv4(const psp_session_desc_t &session, uint32_t spi, uint8_t *encap_data)
+{
+	auto *encap_hdr = (eth_ipv4_psp_tunnel_hdr *)encap_data;
 
-// 	encap_hdr->eth.ether_type = RTE_BE16(RTE_ETHER_TYPE_IPV4);
-// 	encap_hdr->udp.src_port = 0x0; // computed
-// 	encap_hdr->udp.dst_port = RTE_BE16(DOCA_FLOW_PSP_DEFAULT_PORT);
-// 	encap_hdr->psp.nexthdr = 4;
-// 	encap_hdr->psp.hdrextlen = (uint8_t)(app_config->net_config.vc_enabled ? 2 : 1);
-// 	encap_hdr->psp.res_cryptofst = (uint8_t)app_config->net_config.crypt_offset;
-// 	encap_hdr->psp.spi = RTE_BE32(spi);
-// 	encap_hdr->psp_virt_cookie = RTE_BE64(session->vc);
+	encap_hdr->eth.ether_type = RTE_BE16(RTE_ETHER_TYPE_IPV4);
+	encap_hdr->udp.src_port = 0x0; // computed
+	encap_hdr->udp.dst_port = RTE_BE16(DOCA_FLOW_PSP_DEFAULT_PORT);
+	encap_hdr->psp.nexthdr = 4;
+	encap_hdr->psp.hdrextlen = (uint8_t)(app_config->net_config.vc_enabled ? 2 : 1);
+	encap_hdr->psp.res_cryptofst = (uint8_t)app_config->net_config.crypt_offset;
+	encap_hdr->psp.spi = RTE_BE32(spi);
+	// encap_hdr->psp_virt_cookie = RTE_BE64(session->vc);
+	encap_hdr->psp_virt_cookie = 0x778899aabbccddee;
 
-// 	const auto &dmac = app_config->nexthop_enable ? app_config->nexthop_dmac : session->dst_mac;
-// 	memcpy(encap_hdr->eth.dst_addr.addr_bytes, dmac.addr_bytes, RTE_ETHER_ADDR_LEN); // todo
-// 	memcpy(encap_hdr->eth.src_addr.addr_bytes, pf_dev.pf_mac.addr_bytes, RTE_ETHER_ADDR_LEN);
-// 	encap_hdr->ip.src_addr = pf_dev->src_pip.ipv4_addr;
-// 	encap_hdr->ip.dst_addr = session->dst_pip.ipv4_addr;
-// 	encap_hdr->ip.version_ihl = 0x45;
-// 	encap_hdr->ip.next_proto_id = IPPROTO_UDP;
+	memcpy(encap_hdr->eth.src_addr.addr_bytes, pf_dev.pf_mac.addr_bytes, RTE_ETHER_ADDR_LEN);
+	memcpy(encap_hdr->eth.dst_addr.addr_bytes, &nic_info.nexthop_mac, RTE_ETHER_ADDR_LEN);
+	encap_hdr->ip.src_addr = pf_dev.local_pip.ipv4_addr;
+	encap_hdr->ip.version_ihl = 0x45;
+	encap_hdr->ip.next_proto_id = IPPROTO_UDP;
 
-// 	encap_hdr->psp.rsrv1 = 1; // always 1
-// 	encap_hdr->psp.ver = session->psp_proto_ver;
-// 	encap_hdr->psp.v = !!app_config->net_config.vc_enabled;
-// 	// encap_hdr->psp.s will be set by the egress_sampling pipe
-// }
+	encap_hdr->psp.rsrv1 = 1; // always 1
+	encap_hdr->psp.ver = app_config->net_config.default_psp_proto_ver;
+	encap_hdr->psp.v = !!app_config->net_config.vc_enabled;
+	// encap_hdr->psp.s will be set by the egress_sampling pipe
+
+	if (inet_pton(AF_INET, session.remote_pip.c_str(), &encap_hdr->ip.dst_addr) != 1) {
+		DOCA_LOG_ERR("Failed to convert remote_vip %s to IPv4", session.remote_pip.c_str());
+		return;
+	}
+}
 
 doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &session, uint32_t spi, uint32_t crypto_id, doca_flow_pipe_entry **entry)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
 	doca_error_t result = DOCA_SUCCESS;
 
+	bool ipv6_pip = session.remote_pip.find(":") != std::string::npos;
 	// If we receive a non-NULL entry, instead of creating a new entry, we just update the old one in-place
 	bool update_entry = *entry != NULL;
 
@@ -1328,8 +1330,7 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
 	encap_actions.crypto_encap.net_type = DOCA_FLOW_CRYPTO_HEADER_PSP_TUNNEL;
 	encap_actions.crypto_encap.icv_size = PSP_ICV_SIZE;
 
-	if (true) {
-	// if (session->dst_pip.type == DOCA_FLOW_L3_TYPE_IP6) { // todo
+	if (ipv6_pip) {
 		encap_actions.crypto_encap.data_size = sizeof(eth_ipv6_psp_tunnel_hdr);
 		encap_actions.action_idx = 0;
 	} else {
@@ -1340,11 +1341,10 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
 	if (!app_config->net_config.vc_enabled) {
 		encap_actions.crypto_encap.data_size -= sizeof(uint64_t);
 	}
-	if (true)
-	// if (session->dst_pip.type == DOCA_FLOW_L3_TYPE_IP6) // todo
+	if (ipv6_pip)
 		format_encap_data_ipv6(session, spi, encap_actions.crypto_encap.encap_data);
-	// else
-	// 	format_encap_data_ipv4(session, spi, encap_actions.crypto_encap.encap_data);
+	else
+		format_encap_data_ipv4(session, spi, encap_actions.crypto_encap.encap_data);
 
 	encap_actions.crypto.action_type = DOCA_FLOW_CRYPTO_ACTION_ENCRYPT;
 	encap_actions.crypto.resource_type = DOCA_FLOW_CRYPTO_RESOURCE_PSP;

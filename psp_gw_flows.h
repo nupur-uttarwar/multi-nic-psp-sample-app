@@ -411,6 +411,7 @@ private:
 
 	doca_error_t set_egress_path(const psp_session_desc_t &session, const spi_keyptr_t &spi_key);
 	void format_encap_data_ipv6(const psp_session_desc_t &session, uint32_t spi, uint8_t *encap_data);
+	void format_encap_data_ipv4(const psp_session_desc_t &session, uint32_t spi, uint8_t *encap_data);
 
 	struct pipe_query;
 	std::pair<uint64_t, uint64_t> perform_pipe_query(pipe_query *query, bool suppress_output);
