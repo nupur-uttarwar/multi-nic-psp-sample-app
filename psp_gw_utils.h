@@ -31,6 +31,19 @@
 
 #include <rte_ether.h>
 #include <rte_byteorder.h>
+#include <algorithm>
+#include "psp_gw_config.h"
+
+#define IF_SUCCESS(result, expr) \
+	if (result == DOCA_SUCCESS) { \
+		result = expr; \
+		if (likely(result == DOCA_SUCCESS)) { \
+			DOCA_LOG_DBG("Success: %s", #expr); \
+		} else { \
+			DOCA_LOG_ERR("Error: %s: %s", #expr, doca_error_get_descr(result)); \
+		} \
+	} else { /* skip this expr */ \
+	}
 
 /**
  * @brief Converts an IPv4 address to a C++ string
@@ -54,5 +67,16 @@ std::string mac_to_string(const rte_ether_addr &mac_addr);
  * @return: true if all bits are zero; false otherwise
  */
 bool is_empty_mac_addr(const rte_ether_addr &addr);
+
+/**
+ * @brief Returns the number of bits of the key size as determined
+ * by the given PSP protocol version.
+ *
+ * @psp_proto_ver [in]: the PSP protocol version
+ * @return: 128 or 256 depending on the key type
+ */
+uint32_t psp_version_to_key_length_bits(uint32_t psp_proto_ver);
+
+void print_nic(std::string prefix, psp_gw_nic_desc_t nic);
 
 #endif /* _PSP_GW_UTILS_H_ */

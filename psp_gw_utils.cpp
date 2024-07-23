@@ -58,3 +58,22 @@ bool is_empty_mac_addr(const rte_ether_addr &addr)
 	rte_ether_addr empty_ether_addr = {};
 	return !memcmp(empty_ether_addr.addr_bytes, addr.addr_bytes, RTE_ETHER_ADDR_LEN);
 }
+
+uint32_t psp_version_to_key_length_bits(uint32_t psp_proto_ver)
+{
+    return (psp_proto_ver == 0 || psp_proto_ver == 2) ? 128 : 256;
+}
+
+void print_nic(std::string prefix, psp_gw_nic_desc_t nic)
+{
+	std::string out = prefix + " NIC: \n";
+	out += "\thostname: " + nic.hostname + "\n";
+	out += "\tpci: " + nic.pci + "\n";
+	out += "\trepr: " + nic.repr + "\n";
+	out += "\tsvc_ip: " + ipv4_to_string(nic.svc_ip) + "\n";
+	out += "\tpip: " + nic.pip + "\n";
+	for (auto vip : nic.vips) {
+		out += "\tvip: " + vip + "\n";
+	}
+	printf("%s", out.c_str());
+}
