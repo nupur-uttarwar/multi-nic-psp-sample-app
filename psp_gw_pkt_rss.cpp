@@ -77,7 +77,10 @@ static void handle_packet(struct lcore_params *params, uint16_t port_id, uint16_
 		if (ether_type == DOCA_FLOW_ETHER_TYPE_ARP) {
 			handle_arp(params->config->dpdk_config.mbuf_pool, port_id, queue_id, packet, 0);
 		} else {
-			params->psp_svc->handle_miss_packet(packet);
+			doca_error_t result = params->psp_svc->handle_miss_packet(packet);
+			if (result == DOCA_SUCCESS)
+				reinject_packet(packet, port_id);
+
 		}
 	}
 }

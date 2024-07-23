@@ -222,6 +222,7 @@ public:
 	}
 
 	void show_static_flow_counts(void);
+	void show_session_flow_counts(void);
 
 private:
 

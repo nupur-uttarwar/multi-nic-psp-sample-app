@@ -245,8 +245,6 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 	const std::vector<psp_session_desc_t> &sessions,
 	const std::vector<bool> expire_old)
 {
-	DOCA_LOG_INFO("Deleting ingress paths");
-
 	std::vector<doca_error_t> results;
 	for (size_t i = 0; i < sessions.size(); ++i) {
 		const psp_session_desc_t &session = sessions[i];
@@ -264,8 +262,10 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 		ingress_sessions[session].expiring_ingress_acl_entry = nullptr;
 
 		doca_error_t result = DOCA_SUCCESS;
-		if (*expiring_entry)
+		if (*expiring_entry) {
 			remove_single_entry(expiring_entry);
+			DOCA_LOG_INFO("Removing expired ingress path");
+		}
 		results.push_back(result);
 	}
 
@@ -309,7 +309,7 @@ doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session
 
 	if (update_existing_session) {
 		// todo, doca_flow_update_entry helper
-		result = config_encrypt_entry(session, spi_key.spi, new_session.crypto_id, &new_session.encap_encrypt_entry);
+		// result = config_encrypt_entry(session, spi_key.spi, new_session.crypto_id, &new_session.encap_encrypt_entry);
 	} else {
 		result = config_encrypt_entry(session, spi_key.spi, new_session.crypto_id, &new_session.encap_encrypt_entry);
 	}
@@ -320,8 +320,6 @@ doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session
 
 	// Update the session to reflect the new state
 	egress_sessions[session] = new_session;
-
-	DOCA_LOG_INFO("Created egress path with SPI %lu", spi_key.spi);
 
 cleanup:
 	if (update_existing_session) {
@@ -1296,9 +1294,10 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
 	// If we receive a non-NULL entry, instead of creating a new entry, we just update the old one in-place
 	bool update_entry = *entry == NULL;
 
-	DOCA_LOG_DBG("Creating encrypt flow entry: dst_pip %s, dst_vip %s, SPI %d, crypto_id %d",
+	DOCA_LOG_INFO("%s encrypt flow entry: dst_pip %s, dst_vip %s, SPI %d, crypto_id %d",
+			update_entry ? "Updating" : "Adding",
 		     session.remote_pip.c_str(),
-		     session.local_vip.c_str(),
+		     session.remote_vip.c_str(),
 		     spi,
 		     crypto_id);
 
@@ -1339,7 +1338,13 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
 	encap_actions.crypto.crypto_id = crypto_id;
 
 	if (update_entry) {
-
+		result = update_single_entry(0,
+						egress_acl_pipe,
+						&encap_encrypt_match,
+						&encap_actions,
+						nullptr,
+						nullptr,
+						*entry);
 	}
 	else {
 		result = add_single_entry(0,
@@ -1482,5 +1487,48 @@ void PSP_GatewayFlows::show_static_flow_counts(void)
 			total_pkts += hits_misses.first + hits_misses.second;
 		}
 		prev_static_flow_count = total_pkts;
+	}
+}
+
+void PSP_GatewayFlows::show_session_flow_counts(void)
+{
+	for (auto &session : egress_sessions) {
+		doca_flow_resource_query stats = {};
+		doca_error_t result = doca_flow_resource_query_entry(session.second.encap_encrypt_entry, &stats);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_WARN("Session Egress flow %s->%s: query failed: %s",
+				      session.first.local_vip.c_str(),
+				      session.first.remote_vip.c_str(),
+				      doca_error_get_descr(result));
+			continue;
+		}
+		if (session.second.pkt_count_egress != stats.counter.total_pkts) {
+			DOCA_LOG_INFO("Session Egress flow %s->%s: %ld hits",
+					session.first.local_vip.c_str(),
+					session.first.remote_vip.c_str(),
+					stats.counter.total_pkts);
+			session.second.pkt_count_egress = stats.counter.total_pkts;
+		}
+	}
+
+	if (!app_config->disable_ingress_acl) {
+		for (auto &session : ingress_sessions) {
+			doca_flow_resource_query stats = {};
+			doca_error_t result = doca_flow_resource_query_entry(session.second.ingress_acl_entry, &stats);
+			if (result != DOCA_SUCCESS) {
+				DOCA_LOG_WARN("Session Ingress flow %s<-%s: query failed: %s",
+					session.first.local_vip.c_str(),
+					session.first.remote_vip.c_str(),
+					doca_error_get_descr(result));
+				continue;
+			}
+			if (session.second.pkt_count_ingress != stats.counter.total_pkts) {
+				DOCA_LOG_INFO("Session Ingress flow %s<-%s: %ld hits",
+					session.first.local_vip.c_str(),
+					session.first.remote_vip.c_str(),
+					stats.counter.total_pkts);
+				session.second.pkt_count_ingress = stats.counter.total_pkts;
+			}
+		}
 	}
 }

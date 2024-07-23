@@ -266,6 +266,9 @@ doca_error_t PSP_GatewayImpl::show_flow_counts(void)
 	for (auto &pair : psp_flows) {
 		pair.second->show_static_flow_counts();
 	}
+	for (auto &pair : psp_flows) {
+		pair.second->show_session_flow_counts();
+	}
 	return DOCA_SUCCESS;
 }
 
