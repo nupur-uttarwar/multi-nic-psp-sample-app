@@ -265,8 +265,6 @@ doca_error_t PSP_GatewayImpl::show_flow_counts(void)
 
 	for (auto &pair : psp_flows) {
 		pair.second->show_static_flow_counts();
-	}
-	for (auto &pair : psp_flows) {
 		pair.second->show_session_flow_counts();
 	}
 	return DOCA_SUCCESS;
@@ -334,19 +332,21 @@ doca_error_t PSP_GatewayImpl::init_doca_flow(void)
 	rss_config.nr_queues = nb_queues;
 	rss_config.queues_array = rss_queues;
 
+	size_t nb_nics = psp_flows.size();
+
 	/* init doca flow with crypto shared resources */
 	struct doca_flow_cfg *flow_cfg;
 	IF_SUCCESS(result, doca_flow_cfg_create(&flow_cfg));
 	IF_SUCCESS(result, doca_flow_cfg_set_pipe_queues(flow_cfg, nb_queues));
-	IF_SUCCESS(result, doca_flow_cfg_set_nr_counters(flow_cfg, config->max_tunnels * NUM_OF_PSP_SYNDROMES + 10));
+	IF_SUCCESS(result, doca_flow_cfg_set_nr_counters(flow_cfg, nb_nics * config->max_tunnels * NUM_OF_PSP_SYNDROMES + 10));
 	IF_SUCCESS(result, doca_flow_cfg_set_mode_args(flow_cfg, "switch,hws,isolated,expert"));
 	IF_SUCCESS(result, doca_flow_cfg_set_cb_entry_process(flow_cfg, PSP_GatewayImpl::check_for_valid_entry));
 	IF_SUCCESS(result, doca_flow_cfg_set_default_rss(flow_cfg, &rss_config));
 	IF_SUCCESS(result,
 		   doca_flow_cfg_set_nr_shared_resource(flow_cfg,
-							config->crypto_ids_per_nic,
+							config->crypto_ids_per_nic * nb_nics,
 							DOCA_FLOW_SHARED_RESOURCE_PSP));
-	IF_SUCCESS(result, doca_flow_cfg_set_nr_shared_resource(flow_cfg, 4, DOCA_FLOW_SHARED_RESOURCE_MIRROR));
+	IF_SUCCESS(result, doca_flow_cfg_set_nr_shared_resource(flow_cfg, 4 * nb_nics, DOCA_FLOW_SHARED_RESOURCE_MIRROR));
 	IF_SUCCESS(result, doca_flow_init(flow_cfg));
 
 	if (result == DOCA_SUCCESS)

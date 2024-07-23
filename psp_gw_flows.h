@@ -467,8 +467,8 @@ private:
 	struct doca_flow_monitor monitor_count{};
 
 	// Shared resource IDs
-	uint32_t mirror_res_id{1};
-	uint32_t mirror_res_id_port{2};
+	uint32_t mirror_res_id;
+	uint32_t mirror_res_id_port;
 
 	uint64_t prev_static_flow_count{UINT64_MAX};
 };

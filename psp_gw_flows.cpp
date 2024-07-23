@@ -93,6 +93,9 @@ PSP_GatewayFlows::PSP_GatewayFlows(psp_gw_nic_desc_t nic_info, psp_gw_app_config
 	for (uint32_t i = crypto_id_start; i < crypto_id_start + app_config->crypto_ids_per_nic; i++) {
 		available_crypto_ids.insert(i);
 	}
+
+	mirror_res_id = ++app_config->next_mirror_id;
+	mirror_res_id_port = ++app_config->next_mirror_id;
 }
 
 PSP_GatewayFlows::~PSP_GatewayFlows()
@@ -119,8 +122,8 @@ doca_error_t PSP_GatewayFlows::init_dev(void)
 		return result;
 	}
 
-	pf_dev.pf_port_id = 0;
-	pf_dev.vf_port_id = pf_dev.pf_port_id + 1;
+	pf_dev.pf_port_id = app_config->next_port_id++;
+	pf_dev.vf_port_id = app_config->next_port_id++;
 
 	rte_eth_macaddr_get(pf_dev.pf_port_id, &pf_dev.pf_mac);
 	pf_dev.pf_mac_str = mac_to_string(pf_dev.pf_mac);
@@ -452,12 +455,10 @@ doca_error_t PSP_GatewayFlows::bind_shared_resources(void)
 	doca_error_t result = DOCA_SUCCESS;
 
 	std::vector<uint32_t> psp_ids(available_crypto_ids.begin(), available_crypto_ids.end());
-	uint32_t psp_ids2[available_crypto_ids.size()];
-	std::copy(psp_ids.begin(), psp_ids.end(), psp_ids2);
 
 	IF_SUCCESS(result,
 		   doca_flow_shared_resources_bind(DOCA_FLOW_SHARED_RESOURCE_PSP,
-						   psp_ids2,
+						   psp_ids.data(),
 						   available_crypto_ids.size(),
 						   pf_dev.pf_port));
 
@@ -1486,7 +1487,7 @@ void PSP_GatewayFlows::show_static_flow_counts(void)
 
 	if (total_pkts != prev_static_flow_count) {
 		total_pkts = 0;
-		DOCA_LOG_INFO("-------------------------");
+		DOCA_LOG_INFO("%s -------------------------", nic_info.pci.c_str());
 		for (auto &query : queries) {
 			auto hits_misses = perform_pipe_query(&query, false);
 			total_pkts += hits_misses.first + hits_misses.second;
