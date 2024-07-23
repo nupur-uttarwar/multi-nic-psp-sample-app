@@ -268,8 +268,8 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 
 		doca_error_t result = DOCA_SUCCESS;
 		if (expiring_entry) {
+			DOCA_LOG_INFO("Removing expired ingress path %s<-%s", session.local_vip.c_str(), session.remote_vip.c_str());
 			result = remove_single_entry(expiring_entry);
-			DOCA_LOG_INFO("Removing expired ingress path");
 		}
 
 		// In case we added an ingress ACL entry, then the remote side did not succeed,
@@ -277,6 +277,7 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 		if (!ingress_sessions[session].ingress_acl_entry) {
 			ingress_sessions.erase(session);
 		}
+
 		results.push_back(result);
 	}
 
@@ -912,6 +913,7 @@ doca_error_t PSP_GatewayFlows::egress_acl_pipe_create(void)
 	match.parser_meta.outer_l3_type = DOCA_FLOW_L3_META_IPV4;
 	match.outer.l3_type = DOCA_FLOW_L3_TYPE_IP4;
 	match.outer.ip4.dst_ip = UINT32_MAX;
+	match.outer.ip4.src_ip = UINT32_MAX;
 
 	doca_flow_actions actions = {};
 	doca_flow_actions encap_ipv4 = {};
@@ -1317,6 +1319,10 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
 	encap_encrypt_match.outer.l3_type = DOCA_FLOW_L3_TYPE_IP4;
 	if (inet_pton(AF_INET, session.remote_vip.c_str(), &encap_encrypt_match.outer.ip4.dst_ip) != 1) {
 		DOCA_LOG_ERR("Failed to convert remote_vip %s to IPv4", session.remote_vip.c_str());
+		return DOCA_ERROR_BAD_STATE;
+	}
+	if (inet_pton(AF_INET, session.local_vip.c_str(), &encap_encrypt_match.outer.ip4.src_ip) != 1) {
+		DOCA_LOG_ERR("Failed to convert local_vip %s to IPv4", session.local_vip.c_str());
 		return DOCA_ERROR_BAD_STATE;
 	}
 
