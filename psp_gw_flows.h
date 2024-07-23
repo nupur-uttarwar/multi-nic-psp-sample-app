@@ -405,7 +405,7 @@ private:
 						const doca_flow_fwd *fwd,
 						doca_flow_pipe_entry *entry);
 
-	doca_error_t remove_single_entry(doca_flow_pipe_entry **entry);
+	doca_error_t remove_single_entry(doca_flow_pipe_entry *entry);
 
 	doca_error_t config_encrypt_entry(const psp_session_desc_t &session, uint32_t spi, uint32_t crypto_id, doca_flow_pipe_entry **new_entry);
 

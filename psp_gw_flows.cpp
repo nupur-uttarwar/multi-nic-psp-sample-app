@@ -252,20 +252,26 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 
 		assert(!(session.local_vip.empty() || session.remote_vip.empty() || session.remote_pip.empty()));
 
-		doca_flow_pipe_entry **expiring_entry = nullptr;
+		doca_flow_pipe_entry *expiring_entry = nullptr;
 		if (exp_old) {
-			expiring_entry = &ingress_sessions[session].expiring_ingress_acl_entry;
+			expiring_entry = ingress_sessions[session].expiring_ingress_acl_entry;
 		} else {
-			expiring_entry = &ingress_sessions[session].ingress_acl_entry;
+			expiring_entry = ingress_sessions[session].ingress_acl_entry;
 			ingress_sessions[session].ingress_acl_entry = ingress_sessions[session].expiring_ingress_acl_entry;
 		}
 		ingress_sessions[session].expiring_ingress_acl_entry = nullptr;
 
+		// At this point:
+		// - expiring_entry points to the entry that should be removed
+		// - ingress_sessions[session].ingress_acl_entry points to the entry that should be kept
+		// - ingress_sessions[session].expiring_ingress_acl_entry is nullptr
+
 		doca_error_t result = DOCA_SUCCESS;
-		if (*expiring_entry) {
+		if (expiring_entry) {
 			remove_single_entry(expiring_entry);
 			DOCA_LOG_INFO("Removing expired ingress path");
 		}
+		assert(ingress_sessions[session].ingress_acl_entry);
 		results.push_back(result);
 	}
 
@@ -1396,17 +1402,16 @@ doca_error_t PSP_GatewayFlows::add_ingress_acl_entry(const psp_session_desc_t &s
 	return result;
 }
 
-doca_error_t PSP_GatewayFlows::remove_single_entry(doca_flow_pipe_entry **entry)
+doca_error_t PSP_GatewayFlows::remove_single_entry(doca_flow_pipe_entry *entry)
 {
 	doca_error_t result = DOCA_SUCCESS;
 	assert(entry);
 
-	result = doca_flow_pipe_remove_entry(0, DOCA_FLOW_NO_WAIT, *entry);
+	result = doca_flow_pipe_remove_entry(0, DOCA_FLOW_NO_WAIT, entry);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_INFO("Error removing entry from SW: %s", doca_error_get_descr(result));
 		return result;
 	}
-	*entry = NULL;
 
 	result = doca_flow_entries_process(pf_dev.pf_port, 0, DEFAULT_TIMEOUT_US, 1);
 	if (result != DOCA_SUCCESS) {
