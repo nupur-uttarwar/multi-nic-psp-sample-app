@@ -309,7 +309,7 @@ doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session
 
 	if (update_existing_session) {
 		// todo, doca_flow_update_entry helper
-		// result = config_encrypt_entry(session, spi_key.spi, new_session.crypto_id, &new_session.encap_encrypt_entry);
+		result = config_encrypt_entry(session, spi_key.spi, new_session.crypto_id, &new_session.encap_encrypt_entry);
 	} else {
 		result = config_encrypt_entry(session, spi_key.spi, new_session.crypto_id, &new_session.encap_encrypt_entry);
 	}
@@ -1292,7 +1292,7 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
 	doca_error_t result = DOCA_SUCCESS;
 
 	// If we receive a non-NULL entry, instead of creating a new entry, we just update the old one in-place
-	bool update_entry = *entry == NULL;
+	bool update_entry = *entry != NULL;
 
 	DOCA_LOG_INFO("%s encrypt flow entry: dst_pip %s, dst_vip %s, SPI %d, crypto_id %d",
 			update_entry ? "Updating" : "Adding",
