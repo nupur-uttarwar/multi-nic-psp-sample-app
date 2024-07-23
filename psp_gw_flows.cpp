@@ -263,7 +263,9 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 		}
 		ingress_sessions[session].expiring_ingress_acl_entry = nullptr;
 
-		doca_error_t result = remove_single_entry(expiring_entry);
+		doca_error_t result = DOCA_SUCCESS;
+		if (*expiring_entry)
+			remove_single_entry(expiring_entry);
 		results.push_back(result);
 	}
 
@@ -1406,4 +1408,79 @@ doca_error_t PSP_GatewayFlows::remove_single_entry(doca_flow_pipe_entry **entry)
 		DOCA_LOG_ERR("Error removing entry from HW: %s", doca_error_get_descr(result));
 	}
 	return result;
+}
+
+struct PSP_GatewayFlows::pipe_query {
+	doca_flow_pipe *pipe;	     // used to query misses
+	doca_flow_pipe_entry *entry; // used to query static entries
+	std::string name;	     // displays the pipe name
+};
+
+std::pair<uint64_t, uint64_t> PSP_GatewayFlows::perform_pipe_query(pipe_query *query, bool suppress_output)
+{
+	uint64_t new_hits = 0;
+	uint64_t new_misses = 0;
+
+	if (query->entry) {
+		doca_flow_resource_query stats = {};
+		doca_error_t result = doca_flow_resource_query_entry(query->entry, &stats);
+		if (result == DOCA_SUCCESS) {
+			new_hits = stats.counter.total_pkts;
+		}
+	}
+	if (query->pipe) {
+		doca_flow_resource_query stats = {};
+		doca_error_t result = doca_flow_resource_query_pipe_miss(query->pipe, &stats);
+		if (result == DOCA_SUCCESS) {
+			new_misses = stats.counter.total_pkts;
+		}
+	}
+	if (!suppress_output) {
+		if (query->entry && query->pipe) {
+			DOCA_LOG_INFO("%s: %ld hits %ld misses", query->name.c_str(), new_hits, new_misses);
+		} else if (query->entry) {
+			DOCA_LOG_INFO("%s: %ld hits", query->name.c_str(), new_hits);
+		} else if (query->pipe) {
+			DOCA_LOG_INFO("%s: %ld misses", query->name.c_str(), new_hits);
+		}
+	}
+
+	return std::make_pair(new_hits, new_misses);
+}
+
+void PSP_GatewayFlows::show_static_flow_counts(void)
+{
+	std::vector<pipe_query> queries;
+	queries.emplace_back(pipe_query{nullptr, default_rss_entry, "rss_pipe"});
+	queries.emplace_back(pipe_query{nullptr, root_jump_to_ingress_ipv6_entry, "root_jump_to_ingress_ipv6_entry"});
+	queries.emplace_back(pipe_query{nullptr, root_jump_to_ingress_ipv4_entry, "root_jump_to_ingress_ipv4_entry"});
+	queries.emplace_back(pipe_query{nullptr, root_jump_to_egress_entry, "root_jump_to_egress_entry"});
+	queries.emplace_back(pipe_query{nullptr, root_default_drop, "root_miss_drop"});
+	queries.emplace_back(pipe_query{ingress_decrypt_pipe, default_decrypt_entry, "ingress_decrypt_pipe"});
+	queries.emplace_back(pipe_query{ingress_sampling_pipe, default_ingr_sampling_entry, "ingress_sampling_pipe"});
+	queries.emplace_back(pipe_query{ingress_acl_pipe, default_ingr_acl_entry, "ingress_acl_pipe"});
+	for (int i = 0; i < NUM_OF_PSP_SYNDROMES; i++) {
+		queries.emplace_back(
+			pipe_query{nullptr, syndrome_stats_entries[i], "syndrome[" + std::to_string(i) + "]"});
+	}
+	queries.emplace_back(pipe_query{empty_pipe, nullptr, "egress_root"});
+	queries.emplace_back(pipe_query{egress_acl_pipe, nullptr, "egress_acl_pipe"});
+	queries.emplace_back(pipe_query{egress_sampling_pipe, default_egr_sampling_entry, "egress_sampling_pipe"});
+	queries.emplace_back(pipe_query{nullptr, empty_pipe_entry, "arp_packets_intercepted"});
+
+	uint64_t total_pkts = 0;
+	for (auto &query : queries) {
+		auto hits_misses = perform_pipe_query(&query, true);
+		total_pkts += hits_misses.first + hits_misses.second;
+	}
+
+	if (total_pkts != prev_static_flow_count) {
+		total_pkts = 0;
+		DOCA_LOG_INFO("-------------------------");
+		for (auto &query : queries) {
+			auto hits_misses = perform_pipe_query(&query, false);
+			total_pkts += hits_misses.first + hits_misses.second;
+		}
+		prev_static_flow_count = total_pkts;
+	}
 }

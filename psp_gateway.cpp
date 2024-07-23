@@ -198,7 +198,6 @@ int main(int argc, char **argv)
 			sleep(1);
 
 			if (app_config.print_stats) {
-				// psp_flows.show_static_flow_counts();
 				psp_svc.show_flow_counts();
 			}
 		}

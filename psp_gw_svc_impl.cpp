@@ -262,9 +262,10 @@ size_t PSP_GatewayImpl::try_connect(std::vector<psp_gw_nic_desc_t> &hosts, rte_b
 
 doca_error_t PSP_GatewayImpl::show_flow_counts(void)
 {
-	// for (auto &session : sessions) {
-	// 	psp_flows->show_session_flow_count(session.first, session.second);
-	// }
+
+	for (auto &pair : psp_flows) {
+		pair.second->show_static_flow_counts();
+	}
 	return DOCA_SUCCESS;
 }
 

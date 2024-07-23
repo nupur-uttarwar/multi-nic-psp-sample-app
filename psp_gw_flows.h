@@ -221,6 +221,8 @@ public:
 		return pf_dev.local_pip_str;
 	}
 
+	void show_static_flow_counts(void);
+
 private:
 
 	/**
@@ -409,6 +411,9 @@ private:
 	doca_error_t set_egress_path(const psp_session_desc_t &session, const spi_keyptr_t &spi_key);
 	void format_encap_data_ipv6(const psp_session_desc_t &session, uint32_t spi, uint8_t *encap_data);
 
+	struct pipe_query;
+	std::pair<uint64_t, uint64_t> perform_pipe_query(pipe_query *query, bool suppress_output);
+
 	bool sampling_enabled (void) {
 		return app_config->log2_sample_rate > 0;
 	}
@@ -463,6 +468,8 @@ private:
 	// Shared resource IDs
 	uint32_t mirror_res_id{1};
 	uint32_t mirror_res_id_port{2};
+
+	uint64_t prev_static_flow_count{UINT64_MAX};
 };
 
 #endif /* FLOWS_H_ */
