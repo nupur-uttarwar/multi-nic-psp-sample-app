@@ -169,10 +169,16 @@ doca_error_t PSP_GatewayFlows::init_flows(void)
 	return result;
 }
 
-doca_error_t rotate_master_key(void) {
-	DOCA_LOG_INFO("Rotating master key");
+doca_error_t PSP_GatewayFlows::rotate_master_key(std::vector<psp_session_desc_t>& sessions_to_update) {
+	doca_error_t result = doca_flow_crypto_psp_master_key_rotate(pf_dev.pf_port);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to rotate master key: %s", doca_error_get_descr(result));
+	}
 
-	return DOCA_SUCCESS;
+	for (auto& session : ingress_sessions) {
+		sessions_to_update.push_back(session.first);
+	}
+	return result;
 }
 
 std::vector<doca_error_t> PSP_GatewayFlows::update_ingress_paths(

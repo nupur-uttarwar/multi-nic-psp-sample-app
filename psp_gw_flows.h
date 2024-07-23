@@ -161,7 +161,7 @@ public:
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	doca_error_t rotate_master_key(void);
+	doca_error_t rotate_master_key(std::vector<psp_session_desc_t>& sessions_to_update);
 
 	/**
 	 * @brief Re-generate all current ingress paths with new SPIs and keys.

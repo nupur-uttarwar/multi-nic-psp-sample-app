@@ -233,14 +233,20 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 
 	response->set_request_id(request->request_id());
 
-	if (request->issue_new_keys()) {
-		return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "Re-key not implemented");
-	}
 
-	// doca_error_t result = doca_flow_crypto_psp_master_key_rotate(pf->port_obj);
-	// if (result != DOCA_SUCCESS) {
-	// 	return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Key Rotation Failed");
-	// }
+	for (auto &pair : psp_flows) {
+		std::vector<psp_session_desc_t> curr_ingress_sessions;
+		pair.second->rotate_master_key(curr_ingress_sessions);
+
+		if (!request->issue_new_keys() || curr_ingress_sessions.empty()) {
+			continue;
+		}
+		// Request new tunnels to the host with the new key
+		doca_error_t result = request_tunnels_to_host(curr_ingress_sessions);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to update tunnels after key rotation");
+		}
+	}
 
 	return ::grpc::Status::OK;
 }
