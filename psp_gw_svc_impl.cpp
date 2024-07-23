@@ -407,7 +407,10 @@ void PSP_GatewayImpl::check_for_valid_entry(doca_flow_pipe_entry *entry,
 
 	auto *entry_status = (entries_status *)user_ctx;
 
-	if (entry_status == NULL || op != DOCA_FLOW_ENTRY_OP_ADD)
+	if (entry_status == NULL)
+		return;
+
+	if (op != DOCA_FLOW_ENTRY_OP_ADD && op != DOCA_FLOW_ENTRY_OP_UPD)
 		return;
 
 	if (status != DOCA_FLOW_ENTRY_STATUS_SUCCESS)

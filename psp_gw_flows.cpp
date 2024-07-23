@@ -472,27 +472,16 @@ doca_error_t PSP_GatewayFlows::update_single_entry(uint16_t pipe_queue,
 						const doca_flow_fwd *fwd,
 						doca_flow_pipe_entry *entry)
 {
-	int num_of_entries = 1;
-	struct entries_status status = {};
-	status.entries_in_queue = num_of_entries;
-
 	doca_error_t result = doca_flow_pipe_update_entry(0, pipe, actions, mon, fwd, DOCA_FLOW_NO_WAIT, entry);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to update encrypt_encap pipe entry: %s", doca_error_get_descr(result));
 		return result;
 	}
 
-	result = doca_flow_entries_process(pf_dev.pf_port, 0, DEFAULT_TIMEOUT_US, num_of_entries);
+	result = doca_flow_entries_process(pf_dev.pf_port, 0, DEFAULT_TIMEOUT_US, 1);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to process entry: %s", doca_error_get_descr(result));
 		return result;
-	}
-
-	if (status.nb_processed != num_of_entries || status.failure) {
-		DOCA_LOG_ERR("Failed to process entry; nb_processed = %d, failure = %d",
-			     status.nb_processed,
-			     status.failure);
-		return DOCA_ERROR_BAD_STATE;
 	}
 
 	return result;
