@@ -156,6 +156,21 @@ public:
 	 */
 	doca_error_t init_flows(void);
 
+#ifdef DOCA_HAS_POSM
+	/**
+	 * @brief Attempt to set the operational mode of the PF device.
+	 *
+	 * @new_op_state [in]: the desired operational state of the PF device
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t set_op_state(doca_flow_port_operation_state new_op_state);
+
+	doca_flow_port_operation_state get_op_state() const
+	{
+		return this->op_state;
+	}
+#endif // DOCA_HAS_POSM
+
 	/**
 	 * @brief Rotate the master key.
 	 *
@@ -413,6 +428,10 @@ private:
 
 	// Queried state during init
 	psp_pf_dev pf_dev{};
+
+#ifdef DOCA_HAS_POSM
+	doca_flow_port_operation_state op_state{DOCA_FLOW_PORT_OPERATION_STATE_UNCONNECTED};
+#endif
 
 	// Crypto ids bound to the device
 	std::set<uint32_t> available_crypto_ids;

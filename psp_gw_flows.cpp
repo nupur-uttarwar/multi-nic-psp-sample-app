@@ -433,6 +433,22 @@ doca_error_t PSP_GatewayFlows::start_port(uint16_t port_id, doca_dev *port_dev, 
 	return result;
 }
 
+#ifdef DOCA_HAS_POSM
+doca_error_t PSP_GatewayFlows::set_op_state(doca_flow_port_operation_state new_op_state)
+{
+	doca_error_t result = doca_flow_port_operation_state_modify(pf_dev.pf_port, new_op_state);
+	if (result != DOCA_SUCCESS) {
+		std::string failure = "Failed to set operational state: " + std::to_string(result) + " (" +
+				      doca_error_get_descr(result) + ")";
+		DOCA_LOG_ERR("%s", failure.c_str());
+		return DOCA_ERROR_DRIVER;
+	}
+
+	this->op_state = new_op_state;
+	return result;
+}
+#endif // DOCA_HAS_POSM
+
 doca_error_t PSP_GatewayFlows::bind_shared_resources(void)
 {
 	doca_error_t result = DOCA_SUCCESS;

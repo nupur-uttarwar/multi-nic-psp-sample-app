@@ -79,6 +79,19 @@ message KeyRotationResponse
     uint64 request_id = 1;
 }
 
+enum OpState
+{
+    Active = 0;
+    ActivePending = 1;
+    Standby = 2;
+    Disconnected = 3;
+}
+
+message OpStateMsg
+{
+    OpState op_state = 1;
+}
+
 service PSP_Gateway
 {
     // Requests that the recipient allocate multiple SPI and encryption key pairs
@@ -89,4 +102,12 @@ service PSP_Gateway
     // All active keys become deprecated but continue to work.
     // All previously deprecated keys are invalidated.
     rpc RequestKeyRotation(KeyRotationRequest) returns (KeyRotationResponse);
+
+     // Indicates that this Service should attempt to replace any
+     // currently running instances.
+     rpc SetOpState(OpStateMsg) returns (OpStateMsg);
+ 
+     // Checks whether this Service takes precedence over all
+     // other instances.
+     rpc GetOpState(OpStateMsg) returns (OpStateMsg);
 }

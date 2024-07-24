@@ -23,6 +23,7 @@
  *
  */
 
+#include <chrono>
 #include <arpa/inet.h>
 #include <doca_log.h>
 #include <doca_flow_crypto.h>
@@ -251,6 +252,45 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 	}
 
 	return ::grpc::Status::OK;
+}
+
+::grpc::Status PSP_GatewayImpl::SetOpState(::grpc::ServerContext *context,
+					   const ::psp_gateway::OpStateMsg *request,
+					   ::psp_gateway::OpStateMsg *response)
+{
+#ifndef DOCA_HAS_POSM
+	return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "Operational State No Implemented");
+#else
+	using namespace std::chrono;
+	auto tstart = high_resolution_clock::now();
+
+	for (auto &pair : psp_flows) {
+		doca_error_t result = pair.second->set_op_state((doca_flow_port_operation_state)request->op_state());
+		if (result != DOCA_SUCCESS) {
+			std::string failure = "Failed to set operational state: " + std::to_string(result) + " (" +
+						doca_error_get_descr(result) + ")";
+			return ::grpc::Status(::grpc::StatusCode::UNKNOWN, failure);
+		}
+	}
+
+	auto dur = high_resolution_clock::now() - tstart;
+	DOCA_LOG_INFO("Change of op_state: took %ld milliseconds", 
+		duration_cast<milliseconds>(dur).count());
+	response->set_op_state(request->op_state());
+	return ::grpc::Status::OK;
+#endif
+}
+
+::grpc::Status PSP_GatewayImpl::GetOpState(::grpc::ServerContext *context,
+					 const ::psp_gateway::OpStateMsg *request,
+					 ::psp_gateway::OpStateMsg *response)
+{
+#ifndef DOCA_HAS_POSM
+	return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "Operational State No Implemented");
+#else
+	response->set_op_state((psp_gateway::OpState)psp_flows.front().second->get_op_state());
+	return ::grpc::Status::OK;
+#endif
 }
 
 size_t PSP_GatewayImpl::try_connect(std::vector<psp_gw_nic_desc_t> &hosts, rte_be32_t local_vf_addr)
