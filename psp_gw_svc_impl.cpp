@@ -48,7 +48,7 @@ PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config)
 	for (psp_gw_nic_desc_t nic : config->net_config.local_nics) {
 		psp_flows.push_back({
 			nic.pip,
-			std::make_shared<PSP_GatewayFlows>(nic, config, crypto_id)
+			new PSP_GatewayFlows(nic, config, crypto_id)
 		});
 
 		crypto_id += config->crypto_ids_per_nic;
@@ -65,7 +65,7 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(const std::vector<psp_sess
 		return DOCA_SUCCESS;
 	}
 
-	std::shared_ptr<PSP_GatewayFlows> nic = lookup_flows(session_descs[0].local_vip);
+	PSP_GatewayFlows *nic = lookup_flows(session_descs[0].local_vip);
 	if (!nic) {
 		DOCA_LOG_ERR("No NIC found for local VIP %s", session_descs[0].local_vip.c_str());
 		return DOCA_ERROR_BAD_STATE;
@@ -182,7 +182,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 		egress_spi_keys.push_back(spi_key);
 	}
 
-	std::shared_ptr<PSP_GatewayFlows> nic = lookup_flows(relevant_sessions[0].local_vip);
+	PSP_GatewayFlows *nic = lookup_flows(relevant_sessions[0].local_vip);
 	if (!nic) {
 		DOCA_LOG_ERR("No NIC found for local VIP %s", relevant_sessions[0].local_vip.c_str());
 		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "No NIC found for local VIP");
@@ -479,7 +479,7 @@ PSP_GatewayImpl::lookup_nic(std::string vip_to_find)
 	return nullptr;
 }
 
-std::shared_ptr<PSP_GatewayFlows>
+PSP_GatewayFlows*
 PSP_GatewayImpl::lookup_flows(std::string local_vip)
 {
 	struct psp_gw_nic_desc_t *nic = lookup_nic(local_vip);

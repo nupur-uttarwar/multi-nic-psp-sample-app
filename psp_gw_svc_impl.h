@@ -136,7 +136,7 @@ public:
 private:
 
 	psp_gw_nic_desc_t *lookup_nic(std::string vip);
-	std::shared_ptr<PSP_GatewayFlows> lookup_flows(std::string local_vip);
+	PSP_GatewayFlows* lookup_flows(std::string local_vip);
 
 	doca_error_t request_tunnels_to_host(const std::vector<psp_session_desc_t> &session_desc);
 
@@ -166,7 +166,7 @@ private:
 	psp_gw_app_config *config{};
 
 	// mapping of public IP to flows, used for flow lookup
-	using FlowNicPair = std::pair<std::string, std::shared_ptr<PSP_GatewayFlows>>;
+	using FlowNicPair = std::pair<std::string, PSP_GatewayFlows*>;
 	std::vector<FlowNicPair> psp_flows;
 
 	// Used to uniquely populate the request ID in each NewTunnelRequest message.

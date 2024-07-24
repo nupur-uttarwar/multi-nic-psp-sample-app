@@ -229,7 +229,7 @@ std::vector<doca_error_t> PSP_GatewayFlows::create_ingress_paths(
 		if (result == DOCA_SUCCESS) {
 			ingress_sessions[session] = new_session;
 		}
-		results.push_back(result);
+		results[i] = result;
 	}
 
 	assert(results.size() == sessions.size());
