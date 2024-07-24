@@ -213,6 +213,7 @@ static doca_error_t handle_max_tunnels_param(void *param, void *config)
 	}
 
 	app_config->max_tunnels = *int_param;
+	app_config->crypto_ids_per_nic = *int_param + 1;
 	DOCA_LOG_INFO("Configured max-tunnels = %d", app_config->max_tunnels);
 
 	return DOCA_SUCCESS;

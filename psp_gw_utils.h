@@ -79,4 +79,6 @@ uint32_t psp_version_to_key_length_bits(uint32_t psp_proto_ver);
 
 void print_nic(std::string prefix, psp_gw_nic_desc_t nic);
 
+doca_error_t check_any_failed(std::vector<doca_error_t> results);
+
 #endif /* _PSP_GW_UTILS_H_ */

@@ -84,7 +84,7 @@ struct eth_ipv4_psp_tunnel_hdr {
 
 const uint8_t PSP_SAMPLE_ENABLE = 1 << 7;
 
-PSP_GatewayFlows::PSP_GatewayFlows(psp_gw_nic_desc_t nic_info, psp_gw_app_config *app_config, uint32_t crypto_id_start)
+PSP_GatewayFlows::PSP_GatewayFlows(psp_gw_nic_desc_t &nic_info, psp_gw_app_config *app_config, uint32_t crypto_id_start)
 	: app_config(app_config),
 	  nic_info(nic_info)
 {
@@ -181,20 +181,6 @@ doca_error_t PSP_GatewayFlows::rotate_master_key(std::vector<psp_session_desc_t>
 	return result;
 }
 
-std::vector<doca_error_t> PSP_GatewayFlows::update_ingress_paths(
-	const std::vector<psp_session_desc_t> &sessions,
-	const std::vector<spi_key_t> &spi_keys)
-{
-	DOCA_LOG_INFO("Updating ingress paths");
-
-	std::vector<doca_error_t> result;
-
-	// Read current sessions, update them
-
-	return result;
-}
-
-
 std::vector<doca_error_t> PSP_GatewayFlows::create_ingress_paths(
 	const std::vector<psp_session_desc_t> &sessions,
 	std::vector<spi_key_t> &spi_keys)
@@ -224,7 +210,7 @@ std::vector<doca_error_t> PSP_GatewayFlows::create_ingress_paths(
 		spi_keys.push_back(spi_key);
 	}
 
-	std::vector<doca_error_t> results;
+	std::vector<doca_error_t> results(sessions.size());
 	for(size_t i = 0; i < sessions.size(); ++i) {
 		auto &session = sessions[i];
 		auto &spi_key = spi_keys[i];
@@ -254,7 +240,7 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 	const std::vector<psp_session_desc_t> &sessions,
 	const std::vector<bool> expire_old)
 {
-	std::vector<doca_error_t> results;
+	std::vector<doca_error_t> results(sessions.size());
 	for (size_t i = 0; i < sessions.size(); ++i) {
 		const psp_session_desc_t &session = sessions[i];
 		bool exp_old = expire_old[i];
@@ -351,7 +337,9 @@ std::vector<doca_error_t> PSP_GatewayFlows::set_egress_paths(
 	const std::vector<psp_session_desc_t> &sessions,
 	const std::vector<spi_keyptr_t> &spi_keys)
 {
-	std::vector<doca_error_t> results;
+	assert(sessions.size() == spi_keys.size());
+
+	std::vector<doca_error_t> results(sessions.size());
 	for(size_t i = 0; i < sessions.size(); ++i) {
 		auto &session = sessions[i];
 		auto &spi_key = spi_keys[i];
@@ -462,7 +450,7 @@ doca_error_t PSP_GatewayFlows::bind_shared_resources(void)
 	IF_SUCCESS(result,
 		   doca_flow_shared_resources_bind(DOCA_FLOW_SHARED_RESOURCE_PSP,
 						   psp_ids.data(),
-						   available_crypto_ids.size(),
+						   psp_ids.size(),
 						   pf_dev.pf_port));
 
 	return result;

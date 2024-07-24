@@ -77,3 +77,13 @@ void print_nic(std::string prefix, psp_gw_nic_desc_t nic)
 	}
 	printf("%s", out.c_str());
 }
+
+doca_error_t check_any_failed(std::vector<doca_error_t> results)
+{
+	for (auto result : results) {
+		if (result != DOCA_SUCCESS) {
+			return result;
+		}
+	}
+	return DOCA_SUCCESS;
+}

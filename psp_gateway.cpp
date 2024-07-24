@@ -91,8 +91,8 @@ int main(int argc, char **argv)
 	app_config.core_mask = strdup("0x3");
 	app_config.max_tunnels = 128;
 	app_config.net_config.vc_enabled = false;
-	app_config.net_config.crypt_offset = UINT32_MAX;
-	app_config.net_config.default_psp_proto_ver = UINT32_MAX;
+	app_config.net_config.crypt_offset = app_config.net_config.vc_enabled ? DEFAULT_CRYPT_OFFSET_VC_ENABLED : DEFAULT_CRYPT_OFFSET;
+	app_config.net_config.default_psp_proto_ver = DEFAULT_PSP_VERSION;
 	app_config.log2_sample_rate = 0;
 	app_config.ingress_sample_meta_indicator = 0x65656565; // arbitrary pkt_meta flag value
 	app_config.egress_sample_meta_indicator = 0x43434343;

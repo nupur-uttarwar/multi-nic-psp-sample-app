@@ -134,7 +134,7 @@ public:
 	 * @param [in] app_config The application configuration
 	 * @param [in] crypto_id_start The starting index for crypto IDs.
 	 */
-	PSP_GatewayFlows(psp_gw_nic_desc_t nic_info, psp_gw_app_config *app_config, uint32_t crypto_id_start);
+	PSP_GatewayFlows(psp_gw_nic_desc_t &nic_info, psp_gw_app_config *app_config, uint32_t crypto_id_start);
 
 	/**
 	 * Deallocates all associated DOCA objects.
@@ -162,19 +162,6 @@ public:
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
 	doca_error_t rotate_master_key(std::vector<psp_session_desc_t>& sessions_to_update);
-
-	/**
-	 * @brief Re-generate all current ingress paths with new SPIs and keys.
-	 * @param [out] sessions The sessions which were successfully updated
-	 * @param [out] spi_keys The SPIs and keys to use for each session. Invalid if
-	 * 	  the return value is DOCA_ERROR.
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	std::vector<doca_error_t> update_ingress_paths(
-		const std::vector<psp_session_desc_t> &sessions,
-		const std::vector<struct spi_key_t> &spi_keys
-	);
 
 	/**
 	 * @brief Create new ingress paths.

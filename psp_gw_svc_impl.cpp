@@ -39,25 +39,10 @@
 
 DOCA_LOG_REGISTER(PSP_GW_SVC);
 
-#define CHECK_ANY_FAILED(results) (std::any_of((results).begin(), (results).end(), [](int i) { return i != DOCA_SUCCESS; }))
-
 PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config)
 	: config(config)
 {
 	config->crypto_ids_per_nic = config->max_tunnels + 1;
-
-	if (config->net_config.crypt_offset == UINT32_MAX) {
-		// If not specified by argp, select a default crypt_offset
-		config->net_config.crypt_offset =
-			config->net_config.vc_enabled ? DEFAULT_CRYPT_OFFSET_VC_ENABLED : DEFAULT_CRYPT_OFFSET;
-		DOCA_LOG_INFO("Selected crypt_offset of %d", config->net_config.crypt_offset);
-	}
-
-	if (config->net_config.default_psp_proto_ver == UINT32_MAX) {
-		// If not specified by argp, select a default PSP protocol version
-		config->net_config.default_psp_proto_ver = DEFAULT_PSP_VERSION;
-		DOCA_LOG_INFO("Selected psp_ver %d", config->net_config.default_psp_proto_ver);
-	}
 
 	uint32_t crypto_id = 0;
 	for (psp_gw_nic_desc_t nic : config->net_config.local_nics) {
@@ -72,19 +57,23 @@ PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config)
 	assert(psp_flows.size() > 0);
 }
 
-doca_error_t PSP_GatewayImpl::request_tunnels_to_host(std::vector<psp_session_desc_t> session_descs)
+doca_error_t PSP_GatewayImpl::request_tunnels_to_host(const std::vector<psp_session_desc_t> &session_descs)
 {
 	std::vector<doca_error_t> results;
 
+	if (session_descs.size() == 0) {
+		return DOCA_SUCCESS;
+	}
+
 	std::shared_ptr<PSP_GatewayFlows> nic = lookup_flows(session_descs[0].local_vip);
-	if (nic == nullptr) {
+	if (!nic) {
 		DOCA_LOG_ERR("No NIC found for local VIP %s", session_descs[0].local_vip.c_str());
 		return DOCA_ERROR_BAD_STATE;
 	}
 
 	std::vector<spi_key_t> ingress_spi_keys;
 	results = nic->create_ingress_paths(session_descs, ingress_spi_keys);
-	if (CHECK_ANY_FAILED(results)) {
+	if (check_any_failed(results)) {
 		DOCA_LOG_ERR("Failed to create new ingress paths");
 		return DOCA_ERROR_BAD_STATE;
 	}
@@ -117,18 +106,18 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(std::vector<psp_session_de
 			spi_key.spi = response.tunnels_params(0).spi();
 			spi_key.key = (void *)response.tunnels_params(0).encryption_key().c_str();
 
-			std::vector<spi_keyptr_t> egress_spi_keys;
-			egress_spi_keys.push_back(spi_key);
-			results = nic->set_egress_paths(session_descs, egress_spi_keys);
-			if (CHECK_ANY_FAILED(results)) {
+			std::vector<spi_keyptr_t> egress_spi_keys = {spi_key};
+			std::vector<psp_session_desc_t> egress_sessions = {session_descs[i]};
+			results = nic->set_egress_paths(egress_sessions, egress_spi_keys);
+			if (check_any_failed(results)) {
 				DOCA_LOG_ERR("Failed to set egress paths for %s", session_descs[i].remote_vip.c_str());
 			}
 		}
 	}
 
 	results = nic->expire_ingress_paths(session_descs, remote_updated);
-	if (CHECK_ANY_FAILED(results)) {
-		DOCA_LOG_ERR("Failed to expire old ingress paths");
+	if (check_any_failed(results)) {
+		DOCA_LOG_WARN("Failed to expire old ingress paths");
 	}
 
 	return DOCA_SUCCESS;
@@ -136,7 +125,7 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(std::vector<psp_session_de
 
 doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 {
-	std::vector<psp_session_desc_t> session_descs;
+
 	if (config->create_tunnels_at_startup)
 		return DOCA_SUCCESS; // no action; tunnels to be created by the main loop
 
@@ -156,7 +145,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 	}
 	session_desc.remote_pip = remote_nic->pip;
 
-	session_descs.push_back(session_desc);
+	std::vector<psp_session_desc_t> session_descs = {session_desc};
 	doca_error_t result = request_tunnels_to_host(session_descs);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to request tunnel to %s", session_desc.remote_vip.c_str());
@@ -171,6 +160,11 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 							    const ::psp_gateway::MultiTunnelRequest *request,
 							    ::psp_gateway::MultiTunnelResponse *response)
 {
+	if (request->tunnels_size() == 0) {
+		DOCA_LOG_WARN("Request received with no tunnels");
+		return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "No tunnels requested");
+	}
+
 	std::vector<psp_session_desc_t> relevant_sessions;
 	std::vector<spi_keyptr_t> egress_spi_keys;
 	for (int i = 0; i < request->tunnels_size(); i++) {
@@ -189,16 +183,20 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 	}
 
 	std::shared_ptr<PSP_GatewayFlows> nic = lookup_flows(relevant_sessions[0].local_vip);
+	if (!nic) {
+		DOCA_LOG_ERR("No NIC found for local VIP %s", relevant_sessions[0].local_vip.c_str());
+		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "No NIC found for local VIP");
+	}
 
 	std::vector<doca_error_t> results;
 	results = nic->set_egress_paths(relevant_sessions, egress_spi_keys);
-	if (CHECK_ANY_FAILED(results)) {
+	if (check_any_failed(results)) {
 		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Failed to set egress paths");
 	}
 
 	std::vector<spi_key_t> ingress_spi_keys;
 	results = nic->create_ingress_paths(relevant_sessions, ingress_spi_keys);
-	if (CHECK_ANY_FAILED(results)) {
+	if (check_any_failed(results)) {
 		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Failed to create new ingress paths");
 	}
 
@@ -216,7 +214,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 		remote_updated.push_back(result == DOCA_SUCCESS);
 	}
 	results = nic->expire_ingress_paths(relevant_sessions, remote_updated);
-	if (CHECK_ANY_FAILED(results)) {
+	if (check_any_failed(results)) {
 		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Failed to expire old ingress paths");
 	}
 

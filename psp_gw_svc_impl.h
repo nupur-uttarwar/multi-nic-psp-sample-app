@@ -138,7 +138,7 @@ private:
 	psp_gw_nic_desc_t *lookup_nic(std::string vip);
 	std::shared_ptr<PSP_GatewayFlows> lookup_flows(std::string local_vip);
 
-	doca_error_t request_tunnels_to_host(std::vector<psp_session_desc_t> session_desc);
+	doca_error_t request_tunnels_to_host(const std::vector<psp_session_desc_t> &session_desc);
 
 	/**
 	 * @brief Callback which is invoked to check the status of every entry
