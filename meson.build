@@ -32,8 +32,10 @@ app_dependencies = [dependency_libdpdk]
 app_dependencies += dependency('json-c', required : true)
 app_dependencies += dependency('threads', required : true)
 
-dependency_doca = dependency('doca', required : true)
-app_dependencies += dependency_doca
+app_dependencies += dependency('doca-common', required : true)
+app_dependencies += dependency('doca-argp', required : true)
+app_dependencies += dependency('doca-flow', required : true)
+app_dependencies += dependency('doca-dpdk-bridge', required : true)
 
 dependency_protobuf = dependency('protobuf', required : true)
 dependency_grpc = dependency('grpc++', required : true)
@@ -43,7 +45,7 @@ subdir('grpc')
 app_dependencies += grpc_dependencies
 app_dependencies += dependency_psp_gateway_grpc
 
-doca_root_dir = dependency_doca.get_variable('prefix', default_value: '/opt/mellanox/doca')
+doca_root_dir = dependency('doca-common').get_variable('prefix', default_value: '/opt/mellanox/doca')
 
 common_dir_path = doca_root_dir + '/applications/common'
 
