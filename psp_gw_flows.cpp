@@ -240,7 +240,7 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 	const std::vector<psp_session_desc_t> &sessions,
 	const std::vector<bool> expire_old)
 {
-	std::vector<doca_error_t> results(sessions.size());
+	std::vector<doca_error_t> results(sessions.size(), DOCA_SUCCESS);
 	for (size_t i = 0; i < sessions.size(); ++i) {
 		const psp_session_desc_t &session = sessions[i];
 		bool exp_old = expire_old[i];
@@ -261,10 +261,9 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 		// - ingress_sessions[session].ingress_acl_entry points to the entry that should be kept
 		// - ingress_sessions[session].expiring_ingress_acl_entry is nullptr
 
-		doca_error_t result = DOCA_SUCCESS;
 		if (expiring_entry) {
 			DOCA_LOG_INFO("Removing expired ingress path %s<-%s", session.local_vip.c_str(), session.remote_vip.c_str());
-			result = remove_single_entry(expiring_entry);
+			results[i] = remove_single_entry(expiring_entry);
 		}
 
 		// In case we added an ingress ACL entry, then the remote side did not succeed,
@@ -272,8 +271,6 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 		if (!ingress_sessions[session].ingress_acl_entry) {
 			ingress_sessions.erase(session);
 		}
-
-		results.push_back(result);
 	}
 
 	assert(results.size() == sessions.size());

@@ -66,6 +66,11 @@ public:
 	PSP_GatewayImpl(psp_gw_app_config *config);
 
 	/**
+	 * @brief Destroys the object.
+	 */
+	~PSP_GatewayImpl();
+
+	/**
 	 * @brief Returns a gRPC client for a given remote host
 	 * Note: this assumes only a single PSP app instance per remote host
 	 *

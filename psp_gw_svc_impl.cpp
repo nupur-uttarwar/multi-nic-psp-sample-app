@@ -57,6 +57,13 @@ PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config)
 	assert(psp_flows.size() > 0);
 }
 
+PSP_GatewayImpl::~PSP_GatewayImpl()
+{
+	for (auto &pair : psp_flows) {
+		delete pair.second;
+	}
+}
+
 doca_error_t PSP_GatewayImpl::request_tunnels_to_host(const std::vector<psp_session_desc_t> &session_descs)
 {
 	std::vector<doca_error_t> results;
