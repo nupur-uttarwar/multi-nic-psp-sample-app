@@ -172,23 +172,20 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 		return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "No tunnels requested");
 	}
 
-	std::vector<psp_session_desc_t> relevant_sessions;
-	std::vector<spi_keyptr_t> egress_spi_keys;
+	std::vector<psp_session_desc_t> relevant_sessions(request->tunnels_size());
+	std::vector<spi_keyptr_t> egress_spi_keys(request->tunnels_size());
 	for (int i = 0; i < request->tunnels_size(); i++) {
 		const auto &tunnel_request = request->tunnels(i);
 
-		psp_session_desc_t session_desc;
-		session_desc.remote_pip = tunnel_request.reverse_params().ip_addr();
-		session_desc.remote_vip = tunnel_request.virt_src_ip();
-		session_desc.local_vip = tunnel_request.virt_dst_ip();
-		relevant_sessions.push_back(session_desc);
+		relevant_sessions[i].remote_pip = tunnel_request.reverse_params().ip_addr();
+		relevant_sessions[i].remote_vip = tunnel_request.virt_src_ip();
+		relevant_sessions[i].local_vip = tunnel_request.virt_dst_ip();
 
-		spi_keyptr_t spi_key;
-		spi_key.spi = tunnel_request.reverse_params().spi();
-		spi_key.key = (void *)tunnel_request.reverse_params().encryption_key().c_str();
-		egress_spi_keys.push_back(spi_key);
+		egress_spi_keys[i].spi = tunnel_request.reverse_params().spi();
+		egress_spi_keys[i].key = (void *)tunnel_request.reverse_params().encryption_key().c_str();
 	}
 
+	// If/when we decide we want to support multiple NIC flow updates in a single request, we can do it here
 	PSP_GatewayFlows *nic = lookup_flows(relevant_sessions[0].local_vip);
 	if (!nic) {
 		DOCA_LOG_ERR("No NIC found for local VIP %s", relevant_sessions[0].local_vip.c_str());

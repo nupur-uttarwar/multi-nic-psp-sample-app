@@ -338,14 +338,9 @@ std::vector<doca_error_t> PSP_GatewayFlows::set_egress_paths(
 
 	std::vector<doca_error_t> results(sessions.size());
 	for(size_t i = 0; i < sessions.size(); ++i) {
-		auto &session = sessions[i];
-		auto &spi_key = spi_keys[i];
 
-		results.push_back(
-			set_egress_path(session, spi_key)
-		);
+		results[i] = set_egress_path(sessions[i], spi_keys[i]);
 	}
-
 	return results;
 }
 
