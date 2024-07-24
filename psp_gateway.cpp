@@ -88,7 +88,7 @@ int main(int argc, char **argv)
 	app_config.dpdk_config.port_config.enable_mbuf_metadata = true;
 	app_config.dpdk_config.port_config.isolated_mode = true;
 	app_config.dpdk_config.reserve_main_thread = true;
-	app_config.core_mask = strdup("0x3");
+	app_config.core_mask = strdup("0x1ff");
 	app_config.max_tunnels = 128;
 	app_config.net_config.vc_enabled = false;
 	app_config.net_config.crypt_offset = app_config.net_config.vc_enabled ? DEFAULT_CRYPT_OFFSET_VC_ENABLED : DEFAULT_CRYPT_OFFSET;

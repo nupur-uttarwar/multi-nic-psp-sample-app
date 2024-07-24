@@ -23,10 +23,12 @@
  *
  */
 
+#include <algorithm>
 #include <chrono>
 #include <arpa/inet.h>
 #include <doca_log.h>
 #include <doca_flow_crypto.h>
+#include <rte_lcore.h>
 
 #include <grpcpp/client_context.h>
 #include <grpcpp/create_channel.h>
@@ -95,6 +97,7 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(const std::vector<psp_sess
 		psp_gw_nic_desc_t *remote_nic = lookup_nic(session_descs[i].remote_vip);
 		auto *stub = get_stub(remote_nic->svc_ip_str);
 
+		request.add_psp_versions_accepted(config->net_config.default_psp_proto_ver);
 		single_request->set_virt_src_ip(session_descs[i].local_vip);
 		single_request->set_virt_dst_ip(session_descs[i].remote_vip);
 		fill_tunnel_params(
@@ -263,14 +266,24 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 #else
 	using namespace std::chrono;
 	auto tstart = high_resolution_clock::now();
+	auto expiration = tstart + seconds(1);
+	auto op_state = (doca_flow_port_operation_state)request->op_state();
 
 	for (auto &pair : psp_flows) {
-		doca_error_t result = pair.second->set_op_state((doca_flow_port_operation_state)request->op_state());
-		if (result != DOCA_SUCCESS) {
-			std::string failure = "Failed to set operational state: " + std::to_string(result) + " (" +
-						doca_error_get_descr(result) + ")";
-			return ::grpc::Status(::grpc::StatusCode::UNKNOWN, failure);
-		}
+		pair.second->set_pending_op_state(op_state);
+		// the lcore threads should call apply_pending_op_state()
+	}
+
+	bool done = false;
+	while (!done && high_resolution_clock::now() < expiration) {
+		done = std::all_of(psp_flows.begin(), psp_flows.end(), [](auto &pair){
+			return !pair.second->has_pending_op_state();
+		});
+	}
+	if (!done) {
+		std::string error = "Timed out waiting for op_state change";
+		DOCA_LOG_ERR("%s", error.c_str());
+		return ::grpc::Status(::grpc::StatusCode::DEADLINE_EXCEEDED, error);
 	}
 
 	auto dur = high_resolution_clock::now() - tstart;
@@ -408,6 +421,7 @@ doca_error_t PSP_GatewayImpl::init_doca_flow(void)
 void PSP_GatewayImpl::launch_lcores(volatile bool *force_quit) {
 	uint32_t lcore_id;
 
+	lcore_params_list.reserve(rte_lcore_count());
 	RTE_LCORE_FOREACH_WORKER(lcore_id)
 	{
 		struct lcore_params lcore_params = {
@@ -420,6 +434,23 @@ void PSP_GatewayImpl::launch_lcores(volatile bool *force_quit) {
 		lcore_params_list.push_back(lcore_params);
 		rte_eal_remote_launch(lcore_pkt_proc_func, &lcore_params_list.back(), lcore_id);
 	}
+}
+
+void PSP_GatewayImpl::lcore_callback()
+{
+#ifdef DOCA_HAS_POSM
+	// Note lcore_id==0 is reserved for main()
+	uint32_t lcore_id = rte_lcore_id() - 1;
+	uint32_t lcore_count = rte_lcore_count() - 1;
+
+	for (uint32_t nic_idx=lcore_id; nic_idx<psp_flows.size(); nic_idx += lcore_count) {
+		doca_error_t result = psp_flows[nic_idx].second->apply_pending_op_state();
+		if (result != DOCA_SUCCESS && result != DOCA_ERROR_SKIPPED) {
+			DOCA_LOG_ERR("Failed to set operational state: %d (%s)", result, doca_error_get_descr(result));
+			
+		}
+	}
+#endif
 }
 
 void PSP_GatewayImpl::kill_lcores() {

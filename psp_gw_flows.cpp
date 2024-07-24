@@ -166,6 +166,11 @@ doca_error_t PSP_GatewayFlows::init_flows(void)
 	IF_SUCCESS(result, bind_shared_resources());
 	IF_SUCCESS(result, create_pipes());
 
+#ifdef DOCA_HAS_POSM
+	set_pending_op_state(DOCA_FLOW_PORT_OPERATION_STATE_STANDBY);
+	IF_SUCCESS(result, apply_pending_op_state());
+#endif
+
 	return result;
 }
 
@@ -420,6 +425,11 @@ doca_error_t PSP_GatewayFlows::start_port(uint16_t port_id, doca_dev *port_dev, 
 	std::string port_id_str = std::to_string(port_id); // note that set_devargs() clones the string contents
 	IF_SUCCESS(result, doca_flow_port_cfg_set_devargs(port_cfg, port_id_str.c_str()));
 	IF_SUCCESS(result, doca_flow_port_cfg_set_dev(port_cfg, port_dev));
+#ifdef DOCA_HAS_POSM
+	if (port_dev) {
+		IF_SUCCESS(result, doca_flow_port_cfg_set_operation_state(port_cfg, op_state));
+	}
+#endif
 	IF_SUCCESS(result, doca_flow_port_start(port_cfg, port));
 	if (result == DOCA_SUCCESS) {
 		rte_ether_addr port_mac_addr;
@@ -434,9 +444,18 @@ doca_error_t PSP_GatewayFlows::start_port(uint16_t port_id, doca_dev *port_dev, 
 }
 
 #ifdef DOCA_HAS_POSM
-doca_error_t PSP_GatewayFlows::set_op_state(doca_flow_port_operation_state new_op_state)
+void PSP_GatewayFlows::set_pending_op_state(doca_flow_port_operation_state new_op_state)
 {
-	doca_error_t result = doca_flow_port_operation_state_modify(pf_dev.pf_port, new_op_state);
+	this->pending_op_state = new_op_state;
+}
+
+doca_error_t PSP_GatewayFlows::apply_pending_op_state()
+{
+	if (this->op_state == this->pending_op_state) {
+		return DOCA_ERROR_SKIPPED;
+	}
+
+	doca_error_t result = doca_flow_port_operation_state_modify(pf_dev.pf_port, this->pending_op_state);
 	if (result != DOCA_SUCCESS) {
 		std::string failure = "Failed to set operational state: " + std::to_string(result) + " (" +
 				      doca_error_get_descr(result) + ")";
@@ -444,7 +463,7 @@ doca_error_t PSP_GatewayFlows::set_op_state(doca_flow_port_operation_state new_o
 		return DOCA_ERROR_DRIVER;
 	}
 
-	this->op_state = new_op_state;
+	this->op_state = this->pending_op_state;
 	return result;
 }
 #endif // DOCA_HAS_POSM

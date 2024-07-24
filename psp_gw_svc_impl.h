@@ -162,6 +162,7 @@ public:
 	doca_error_t init_doca_flow();
 
 	void launch_lcores(volatile bool *force_quit);
+	void lcore_callback();
 	void kill_lcores();
 
 private:

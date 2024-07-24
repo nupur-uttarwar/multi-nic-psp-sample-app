@@ -107,6 +107,9 @@ int lcore_pkt_proc_func(void *lcore_args)
 	while (!*params->force_quit) {
 		uint64_t t_start = rte_rdtsc();
 
+		// handle high-rate tasks:
+		params->psp_svc->lcore_callback();
+
 		uint16_t nb_rx_packets = rte_eth_rx_burst(params->pf_port_id, queue_id, rx_packets, MAX_RX_BURST_SIZE);
 
 		if (!nb_rx_packets)
