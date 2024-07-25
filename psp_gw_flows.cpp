@@ -244,6 +244,10 @@ std::vector<doca_error_t> PSP_GatewayFlows::expire_ingress_paths(
 	const std::vector<bool> expire_old)
 {
 	std::vector<doca_error_t> results(sessions.size(), DOCA_SUCCESS);
+	if (app_config->disable_ingress_acl) {
+		return results;
+	}
+
 	for (size_t i = 0; i < sessions.size(); ++i) {
 		const psp_session_desc_t &session = sessions[i];
 		bool exp_old = expire_old[i];
@@ -650,7 +654,9 @@ doca_error_t PSP_GatewayFlows::ingress_acl_pipe_create(void)
 	fwd_miss.type = DOCA_FLOW_FWD_PIPE;
 	fwd_miss.next_pipe = syndrome_stats_pipe;
 
-	int nr_entries = app_config->disable_ingress_acl ? 1 : app_config->max_tunnels;
+	// During key rotation, we temporarily keep ingress sessions open for both the old and new keys,
+	// so we can have number of entries == number of sessions * 2
+	int nr_entries = app_config->disable_ingress_acl ? 1 : app_config->max_tunnels * 2;
 
 	struct doca_flow_pipe_cfg *pipe_cfg;
 	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev.pf_port));
@@ -1390,8 +1396,8 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
 doca_error_t PSP_GatewayFlows::add_ingress_acl_entry(const psp_session_desc_t &session, uint32_t spi, doca_flow_pipe_entry **entry)
 {
 	if (app_config->disable_ingress_acl) {
-		DOCA_LOG_ERR("Cannot insert ingress ACL flow; disabled");
-		return DOCA_ERROR_BAD_STATE;
+		DOCA_LOG_WARN("Cannot insert ingress ACL flow; disabled");
+		return DOCA_SUCCESS;
 	}
 
 	doca_flow_match match = {};
