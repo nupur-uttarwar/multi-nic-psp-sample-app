@@ -157,41 +157,6 @@ public:
 	doca_error_t init_flows(void);
 
 	/**
-	 * @brief Prepares the next op-state of the PF device.
-	 *
-	 * @new_op_state [in]: the desired operational state of the PF device
-	 */
-	void set_pending_op_state(doca_flow_port_operation_state new_op_state);
-	
-	/**
-	 * @brief Attempt to set the operational mode of the PF device.
-	 *
-	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
-	 */
-	doca_error_t apply_pending_op_state();
-
-	/**
-	 * @brief Queries the current op-state of the PF device
-	 * 
-	 * @return: the current op-state
-	 */
-	doca_flow_port_operation_state get_op_state() const
-	{
-		return this->op_state;
-	}
-
-	/**
-	 * @brief Queries whether the requested op-state is different from the current op-state
-	 * 
-	 * @return: true if apply_pending_op_state() should be called, false if already in the
-	 *          requested state
-	 */
-	bool has_pending_op_state() const
-	{
-		return this->op_state != this->pending_op_state;
-	}
-
-	/**
 	 * @brief Rotate the master key.
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
@@ -448,12 +413,6 @@ private:
 
 	// Queried state during init
 	psp_pf_dev pf_dev{};
-
-	// The operational state of the PF (active, standby, etc.)
-	doca_flow_port_operation_state op_state{DOCA_FLOW_PORT_OPERATION_STATE_UNCONNECTED};
-
-	// The requested op-state, to be applied via the desired thread
-	doca_flow_port_operation_state pending_op_state{DOCA_FLOW_PORT_OPERATION_STATE_UNCONNECTED};
 
 	// Crypto ids bound to the device
 	std::set<uint32_t> available_crypto_ids;

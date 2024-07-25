@@ -104,32 +104,6 @@ public:
 					  ::psp_gateway::KeyRotationResponse *response) override;
 
 	/**
-	 * @brief Indicates that this Service should attempt to replace any
-	 * currently running instances.
-	 *
-	 * @context [in]: grpc context
-	 * @request [in]: request parameters
-	 * @response [out]: requested outputs
-	 * @return: Indicates success/failure of the request
-	 */
-	::grpc::Status SetOpState(::grpc::ServerContext *context,
-				  const ::psp_gateway::OpStateMsg *request,
-				  ::psp_gateway::OpStateMsg *response) override;
-
-	/**
-	 * @brief Checks whether this Service takes precedence over all
-	 * other instances.
-	 *
-	 * @context [in]: grpc context
-	 * @request [in]: request parameters (ignored)
-	 * @response [out]: requested outputs
-	 * @return: Indicates success/failure of the request
-	 */
-	::grpc::Status GetOpState(::grpc::ServerContext *context,
-				const ::psp_gateway::OpStateMsg *request,
-				::psp_gateway::OpStateMsg *response) override;
-
-	/**
 	 * @brief Handles any "miss" packets received by RSS which indicate
 	 *        a new tunnel connection is needed.
 	 *

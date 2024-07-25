@@ -23,8 +23,6 @@
  *
  */
 
-#include <algorithm>
-#include <chrono>
 #include <arpa/inet.h>
 #include <doca_log.h>
 #include <doca_flow_crypto.h>
@@ -254,47 +252,6 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 		}
 	}
 
-	return ::grpc::Status::OK;
-}
-
-::grpc::Status PSP_GatewayImpl::SetOpState(::grpc::ServerContext *context,
-					   const ::psp_gateway::OpStateMsg *request,
-					   ::psp_gateway::OpStateMsg *response)
-{
-	using namespace std::chrono;
-	auto tstart = high_resolution_clock::now();
-	auto expiration = tstart + seconds(1);
-	auto op_state = (doca_flow_port_operation_state)request->op_state();
-
-	for (auto &pair : psp_flows) {
-		pair.second->set_pending_op_state(op_state);
-		// the lcore threads should call apply_pending_op_state() via lcore_callback()
-	}
-
-	bool done = false;
-	while (!done && high_resolution_clock::now() < expiration) {
-		done = std::all_of(psp_flows.begin(), psp_flows.end(), [](auto &pair){
-			return !pair.second->has_pending_op_state();
-		});
-	}
-	if (!done) {
-		std::string error = "Timed out waiting for op_state change";
-		DOCA_LOG_ERR("%s", error.c_str());
-		return ::grpc::Status(::grpc::StatusCode::DEADLINE_EXCEEDED, error);
-	}
-
-	auto dur = high_resolution_clock::now() - tstart;
-	DOCA_LOG_INFO("Change of op_state: took %ld milliseconds",
-		duration_cast<milliseconds>(dur).count());
-	response->set_op_state(request->op_state());
-	return ::grpc::Status::OK;
-}
-
-::grpc::Status PSP_GatewayImpl::GetOpState(::grpc::ServerContext *context,
-					 const ::psp_gateway::OpStateMsg *request,
-					 ::psp_gateway::OpStateMsg *response)
-{
-	response->set_op_state((psp_gateway::OpState)psp_flows.front().second->get_op_state());
 	return ::grpc::Status::OK;
 }
 
