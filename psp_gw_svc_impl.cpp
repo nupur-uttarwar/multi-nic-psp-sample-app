@@ -261,9 +261,6 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 					   const ::psp_gateway::OpStateMsg *request,
 					   ::psp_gateway::OpStateMsg *response)
 {
-#ifndef DOCA_HAS_POSM
-	return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "Operational State No Implemented");
-#else
 	using namespace std::chrono;
 	auto tstart = high_resolution_clock::now();
 	auto expiration = tstart + seconds(1);
@@ -271,7 +268,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 
 	for (auto &pair : psp_flows) {
 		pair.second->set_pending_op_state(op_state);
-		// the lcore threads should call apply_pending_op_state()
+		// the lcore threads should call apply_pending_op_state() via lcore_callback()
 	}
 
 	bool done = false;
@@ -291,19 +288,14 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 		duration_cast<milliseconds>(dur).count());
 	response->set_op_state(request->op_state());
 	return ::grpc::Status::OK;
-#endif
 }
 
 ::grpc::Status PSP_GatewayImpl::GetOpState(::grpc::ServerContext *context,
 					 const ::psp_gateway::OpStateMsg *request,
 					 ::psp_gateway::OpStateMsg *response)
 {
-#ifndef DOCA_HAS_POSM
-	return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "Operational State No Implemented");
-#else
 	response->set_op_state((psp_gateway::OpState)psp_flows.front().second->get_op_state());
 	return ::grpc::Status::OK;
-#endif
 }
 
 size_t PSP_GatewayImpl::try_connect(std::vector<psp_gw_nic_desc_t> &hosts, rte_be32_t local_vf_addr)
@@ -442,7 +434,6 @@ void PSP_GatewayImpl::launch_lcores(volatile bool *force_quit) {
 
 void PSP_GatewayImpl::lcore_callback()
 {
-#ifdef DOCA_HAS_POSM
 	// Note lcore_id==0 is reserved for main()
 	uint32_t lcore_id = rte_lcore_id() - 1;
 	uint32_t lcore_count = rte_lcore_count() - 1;
@@ -454,7 +445,6 @@ void PSP_GatewayImpl::lcore_callback()
 
 		}
 	}
-#endif
 }
 
 void PSP_GatewayImpl::kill_lcores() {

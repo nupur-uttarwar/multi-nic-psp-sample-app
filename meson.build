@@ -41,10 +41,6 @@ dependency_protobuf = dependency('protobuf', required : true)
 dependency_grpc = dependency('grpc++', required : true)
 grpc_dependencies = [dependency_protobuf, dependency_grpc]
 
-c_compiler = meson.get_compiler('c')
-add_project_arguments('-DDOCA_HAS_POSM', language: 'c')
-add_project_arguments('-DDOCA_HAS_POSM', language: 'cpp')
-
 subdir('grpc')
 app_dependencies += grpc_dependencies
 app_dependencies += dependency_psp_gateway_grpc
