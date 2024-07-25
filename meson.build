@@ -42,12 +42,8 @@ dependency_grpc = dependency('grpc++', required : true)
 grpc_dependencies = [dependency_protobuf, dependency_grpc]
 
 c_compiler = meson.get_compiler('c')
-if c_compiler.has_function('doca_flow_port_operation_state_modify', 
-		prefix : '#include <doca_flow.h>', 
-		dependencies: dependency('doca-flow'))
-	add_project_arguments('-DDOCA_HAS_POSM', language: 'c')
-	add_project_arguments('-DDOCA_HAS_POSM', language: 'cpp')
-endif
+add_project_arguments('-DDOCA_HAS_POSM', language: 'c')
+add_project_arguments('-DDOCA_HAS_POSM', language: 'cpp')
 
 subdir('grpc')
 app_dependencies += grpc_dependencies

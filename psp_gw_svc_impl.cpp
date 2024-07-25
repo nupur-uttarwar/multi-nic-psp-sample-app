@@ -287,7 +287,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 	}
 
 	auto dur = high_resolution_clock::now() - tstart;
-	DOCA_LOG_INFO("Change of op_state: took %ld milliseconds", 
+	DOCA_LOG_INFO("Change of op_state: took %ld milliseconds",
 		duration_cast<milliseconds>(dur).count());
 	response->set_op_state(request->op_state());
 	return ::grpc::Status::OK;
@@ -355,11 +355,15 @@ doca_error_t PSP_GatewayImpl::init_devs(void) {
 	doca_error_t result = DOCA_SUCCESS;
 	DOCA_LOG_INFO("Initializing PSP Gateway Devices");
 
-	const char *eal_args[] = {"", "-a00:00.0", "-c", config->core_mask.c_str()};
+	const char *eal_args[] = {"", "-a00:00.0", "-c", config->core_mask.c_str(), "--file-prefix", std::to_string(__rdtsc()).c_str()};
+
 	int n_eal_args = sizeof(eal_args) / sizeof(eal_args[0]);
 	int rc = rte_eal_init(n_eal_args, (char **)eal_args);
 	if (rc < 0) {
 		DOCA_LOG_ERR("EAL initialization failed: %d", rc);
+		for (int i = 0; i < n_eal_args; i++) {
+			DOCA_LOG_ERR("EAL arg %d: %s", i, eal_args[i]);
+		}
 		return DOCA_ERROR_BAD_STATE;
 	}
 
@@ -447,7 +451,7 @@ void PSP_GatewayImpl::lcore_callback()
 		doca_error_t result = psp_flows[nic_idx].second->apply_pending_op_state();
 		if (result != DOCA_SUCCESS && result != DOCA_ERROR_SKIPPED) {
 			DOCA_LOG_ERR("Failed to set operational state: %d (%s)", result, doca_error_get_descr(result));
-			
+
 		}
 	}
 #endif
