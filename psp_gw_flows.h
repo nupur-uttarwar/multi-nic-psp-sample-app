@@ -148,6 +148,7 @@ public:
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
 	doca_error_t init_dev(void);
+	doca_error_t set_active(void);
 
 	/**
 	 * @brief Initialized the DOCA resources.

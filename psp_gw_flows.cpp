@@ -103,6 +103,15 @@ PSP_GatewayFlows::~PSP_GatewayFlows()
 	DOCA_LOG_INFO("Destroying PSP Gateway Flows");
 }
 
+doca_error_t PSP_GatewayFlows::set_active(void)
+{
+	doca_error_t result = doca_flow_port_set_active(pf_dev.pf_port);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to set port %d active: %s", pf_dev.pf_port_id, doca_error_get_descr(result));
+	}
+	return result;
+}
+
 doca_error_t PSP_GatewayFlows::init_dev(void)
 {
 	doca_error_t result = DOCA_SUCCESS;
@@ -166,8 +175,8 @@ doca_error_t PSP_GatewayFlows::init_flows(void)
 	IF_SUCCESS(result, bind_shared_resources());
 	IF_SUCCESS(result, create_pipes());
 
-	set_pending_op_state(DOCA_FLOW_PORT_OPERATION_STATE_STANDBY);
-	IF_SUCCESS(result, apply_pending_op_state());
+	// set_pending_op_state(DOCA_FLOW_PORT_OPERATION_STATE_STANDBY);
+	// IF_SUCCESS(result, apply_pending_op_state());
 
 	return result;
 }
@@ -427,9 +436,9 @@ doca_error_t PSP_GatewayFlows::start_port(uint16_t port_id, doca_dev *port_dev, 
 	std::string port_id_str = std::to_string(port_id); // note that set_devargs() clones the string contents
 	IF_SUCCESS(result, doca_flow_port_cfg_set_devargs(port_cfg, port_id_str.c_str()));
 	IF_SUCCESS(result, doca_flow_port_cfg_set_dev(port_cfg, port_dev));
-	if (port_dev) {
-		IF_SUCCESS(result, doca_flow_port_cfg_set_operation_state(port_cfg, op_state));
-	}
+	// if (port_dev) {
+	// 	IF_SUCCESS(result, doca_flow_port_cfg_set_operation_state(port_cfg, op_state));
+	// }
 	IF_SUCCESS(result, doca_flow_port_start(port_cfg, port));
 	if (result == DOCA_SUCCESS) {
 		rte_ether_addr port_mac_addr;

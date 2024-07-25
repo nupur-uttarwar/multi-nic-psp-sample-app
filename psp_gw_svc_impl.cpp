@@ -330,6 +330,10 @@ doca_error_t PSP_GatewayImpl::init_flows(void) {
 		IF_SUCCESS(result, pair.second->init_flows());
 	}
 
+	for (auto &pair : psp_flows) {
+		IF_SUCCESS(result, pair.second->set_active());
+	}
+
 	return result;
 }
 
@@ -353,7 +357,7 @@ doca_error_t PSP_GatewayImpl::init_doca_flow(void)
 	IF_SUCCESS(result, doca_flow_cfg_create(&flow_cfg));
 	IF_SUCCESS(result, doca_flow_cfg_set_pipe_queues(flow_cfg, nb_queues));
 	IF_SUCCESS(result, doca_flow_cfg_set_nr_counters(flow_cfg, nb_nics * config->max_tunnels * NUM_OF_PSP_SYNDROMES + 10));
-	IF_SUCCESS(result, doca_flow_cfg_set_mode_args(flow_cfg, "switch,hws,isolated,expert"));
+	IF_SUCCESS(result, doca_flow_cfg_set_mode_args(flow_cfg, "switch,hws,isolated,expert,hot_upgrade_en"));
 	IF_SUCCESS(result, doca_flow_cfg_set_cb_entry_process(flow_cfg, PSP_GatewayImpl::check_for_valid_entry));
 	IF_SUCCESS(result, doca_flow_cfg_set_default_rss(flow_cfg, &rss_config));
 	IF_SUCCESS(result,
@@ -396,11 +400,11 @@ void PSP_GatewayImpl::lcore_callback()
 	uint32_t lcore_count = rte_lcore_count() - 1;
 
 	for (uint32_t nic_idx=lcore_id; nic_idx<psp_flows.size(); nic_idx += lcore_count) {
-		doca_error_t result = psp_flows[nic_idx].second->apply_pending_op_state();
-		if (result != DOCA_SUCCESS && result != DOCA_ERROR_SKIPPED) {
-			DOCA_LOG_ERR("Failed to set operational state: %d (%s)", result, doca_error_get_descr(result));
+		// doca_error_t result = psp_flows[nic_idx].second->apply_pending_op_state();
+		// if (result != DOCA_SUCCESS && result != DOCA_ERROR_SKIPPED) {
+		// 	DOCA_LOG_ERR("Failed to set operational state: %d (%s)", result, doca_error_get_descr(result));
 
-		}
+		// }
 	}
 }
 
