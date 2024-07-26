@@ -330,11 +330,14 @@ doca_error_t PSP_GatewayImpl::init_flows(void) {
 		IF_SUCCESS(result, pair.second->init_flows());
 	}
 
-	for (auto &pair : psp_flows) {
-		IF_SUCCESS(result, pair.second->set_active());
-	}
-
 	return result;
+}
+
+void PSP_GatewayImpl::activate(void) {
+	for (auto &pair : psp_flows) {
+		pair.second->set_active();
+		sleep(1);
+	}
 }
 
 doca_error_t PSP_GatewayImpl::init_doca_flow(void)

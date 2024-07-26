@@ -138,6 +138,7 @@ public:
 	void launch_lcores(volatile bool *force_quit);
 	void lcore_callback();
 	void kill_lcores();
+	void activate();
 
 private:
 

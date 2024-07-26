@@ -193,6 +193,7 @@ int main(int argc, char **argv)
 			remotes_to_connect = app_config.net_config.remote_nics;
 		}
 
+		psp_svc.activate();
 		while (!force_quit) {
 			psp_svc.try_connect(remotes_to_connect, local_vf_addr);
 			sleep(1);
