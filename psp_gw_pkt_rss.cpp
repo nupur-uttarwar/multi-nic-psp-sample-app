@@ -74,7 +74,7 @@ static void handle_packet(struct lcore_params *params, uint16_t port_id, uint16_
 
 		struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(packet, struct rte_ether_hdr *);
 		uint16_t ether_type = htons(eth_hdr->ether_type);
-		if (ether_type == DOCA_FLOW_ETHER_TYPE_ARP) {
+		if (ether_type == RTE_ETHER_TYPE_ARP) {
 			handle_arp(params->config->dpdk_config.mbuf_pool, port_id, queue_id, packet, 0);
 		} else {
 			doca_error_t result = params->psp_svc->handle_miss_packet(packet);
@@ -185,7 +185,7 @@ uint16_t handle_arp(struct rte_mempool *mpool,
 
 	rte_eth_macaddr_get(port_id, &response_eth_hdr->src_addr);
 	response_eth_hdr->dst_addr = request_eth_hdr->src_addr;
-	response_eth_hdr->ether_type = RTE_BE16(DOCA_FLOW_ETHER_TYPE_ARP);
+	response_eth_hdr->ether_type = RTE_BE16(RTE_ETHER_TYPE_ARP);
 
 	response_arp_hdr->arp_hardware = RTE_BE16(RTE_ARP_HRD_ETHER);
 	response_arp_hdr->arp_protocol = RTE_BE16(RTE_ETHER_TYPE_IPV4);

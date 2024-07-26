@@ -974,7 +974,7 @@ doca_error_t PSP_GatewayFlows::empty_pipe_create(doca_flow_pipe *next_pipe)
 	doca_error_t result = DOCA_SUCCESS;
 
 	doca_flow_match match_arp = {};
-	match_arp.outer.eth.type = RTE_BE16(DOCA_FLOW_ETHER_TYPE_ARP);
+	match_arp.outer.eth.type = RTE_BE16(RTE_ETHER_TYPE_ARP);
 
 	doca_flow_fwd fwd = {};
 	fwd.type = DOCA_FLOW_FWD_PORT;
@@ -1057,7 +1057,7 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 
 	doca_flow_match arp_from_vf = {};
 	arp_from_vf.parser_meta.port_meta = pf_dev.vf_port_id;
-	arp_from_vf.outer.eth.type = RTE_BE16(DOCA_FLOW_ETHER_TYPE_ARP);
+	arp_from_vf.outer.eth.type = RTE_BE16(RTE_ETHER_TYPE_ARP);
 
 	doca_flow_match empty_match = {};
 
