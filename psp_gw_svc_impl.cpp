@@ -347,7 +347,7 @@ doca_error_t PSP_GatewayImpl::init_devs(void) {
 	doca_error_t result = DOCA_SUCCESS;
 	DOCA_LOG_INFO("Initializing PSP Gateway Devices");
 
-	const char *eal_args[] = {"", "-a00:00.0", "-c", config->core_mask.c_str(), "--file-prefix", std::to_string(__rdtsc()).c_str()};
+	const char *eal_args[] = {"", "-a00:00.0", "-c", config->core_mask.c_str(), "--file-prefix", std::to_string(getpid()).c_str()};
 
 	int n_eal_args = sizeof(eal_args) / sizeof(eal_args[0]);
 	int rc = rte_eal_init(n_eal_args, (char **)eal_args);
