@@ -847,10 +847,6 @@ doca_error_t psp_gw_parse_config_file(psp_gw_app_config *app_config)
 		return result;
 	}
 
-	if (app_config->local_vf_addr.empty() || is_empty_mac_addr(app_config->dcap_dmac)) {
-		DOCA_LOG_ERR("REQUIRED: One of (--vf-name) or (--decap-dmac + 'local-vip')");
-		return DOCA_ERROR_INVALID_VALUE;
-	}
 
 	DOCA_LOG_DBG("Successfully parsed JSON file");
 
@@ -1039,13 +1035,6 @@ doca_error_t psp_gw_argp_exec(int &argc, char *argv[], psp_gw_app_config *app_co
 		DOCA_LOG_ERR("Failed to parse application input: %s", doca_error_get_descr(result));
 		doca_argp_destroy();
 		return result;
-	}
-
-	if (app_config->local_vf_addr.empty() || is_empty_mac_addr(app_config->dcap_dmac)) {
-		DOCA_LOG_ERR("REQUIRED: One of (--vf-name) or (--decap-dmac + --local-virt-ip)");
-		doca_argp_usage();
-		doca_argp_destroy();
-		return DOCA_ERROR_INVALID_VALUE;
 	}
 
 	char hostname[256];
