@@ -268,6 +268,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 
 	for (auto &pair : psp_flows) {
 		pair.second->set_pending_op_state(op_state);
+		pair.second->apply_pending_op_state();
 		// the lcore threads should call apply_pending_op_state() via lcore_callback()
 	}
 
@@ -439,11 +440,11 @@ void PSP_GatewayImpl::lcore_callback()
 	uint32_t lcore_count = rte_lcore_count() - 1;
 
 	for (uint32_t nic_idx=lcore_id; nic_idx<psp_flows.size(); nic_idx += lcore_count) {
-		doca_error_t result = psp_flows[nic_idx].second->apply_pending_op_state();
-		if (result != DOCA_SUCCESS && result != DOCA_ERROR_SKIPPED) {
-			DOCA_LOG_ERR("Failed to set operational state: %d (%s)", result, doca_error_get_descr(result));
-
-		}
+		// doca_error_t result = psp_flows[nic_idx].second->apply_pending_op_state();
+		// if (result != DOCA_SUCCESS && result != DOCA_ERROR_SKIPPED) {
+			// DOCA_LOG_ERR("Failed to set operational state: %d (%s)", result, doca_error_get_descr(result));
+		// }
+		;
 	}
 }
 
