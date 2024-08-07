@@ -90,9 +90,11 @@ PSP_GatewayFlows::PSP_GatewayFlows(psp_gw_nic_desc_t &nic_info, psp_gw_app_confi
 {
 	monitor_count.counter_type = DOCA_FLOW_RESOURCE_TYPE_NON_SHARED;
 
-	for (uint32_t i = crypto_id_start; i < crypto_id_start + app_config->crypto_ids_per_nic; i++) {
-		available_crypto_ids.insert(i);
-	}
+	available_crypto_ids.insert(crypto_id_start);
+	// available_crypto_ids.reserve(app_config->crypto_ids_per_nic * 2);
+	// for (uint32_t i = crypto_id_start; i < crypto_id_start + app_config->crypto_ids_per_nic; i++) {
+	// 	available_crypto_ids.insert(i);
+	// }
 
 	mirror_res_id = ++app_config->next_mirror_id;
 	mirror_res_id_port = ++app_config->next_mirror_id;

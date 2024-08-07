@@ -30,6 +30,7 @@
 #include <rte_ether.h>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <doca_flow.h>
 #include <doca_dev.h>
@@ -162,7 +163,7 @@ public:
 	 * @new_op_state [in]: the desired operational state of the PF device
 	 */
 	void set_pending_op_state(doca_flow_port_operation_state new_op_state);
-	
+
 	/**
 	 * @brief Attempt to set the operational mode of the PF device.
 	 *
@@ -172,7 +173,7 @@ public:
 
 	/**
 	 * @brief Queries the current op-state of the PF device
-	 * 
+	 *
 	 * @return: the current op-state
 	 */
 	doca_flow_port_operation_state get_op_state() const
@@ -182,7 +183,7 @@ public:
 
 	/**
 	 * @brief Queries whether the requested op-state is different from the current op-state
-	 * 
+	 *
 	 * @return: true if apply_pending_op_state() should be called, false if already in the
 	 *          requested state
 	 */
@@ -456,7 +457,7 @@ private:
 	doca_flow_port_operation_state pending_op_state{DOCA_FLOW_PORT_OPERATION_STATE_UNCONNECTED};
 
 	// Crypto ids bound to the device
-	std::set<uint32_t> available_crypto_ids;
+	std::unordered_set<uint32_t> available_crypto_ids;
 
 	// Tracking data relevant to each session
 	std::unordered_map<psp_session_desc_t, psp_session_ingress_t, psp_session_desc_hash, psp_session_desc_eq> ingress_sessions;
