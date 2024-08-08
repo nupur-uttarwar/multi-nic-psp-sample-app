@@ -37,6 +37,8 @@ app_dependencies += dependency('doca-argp', required : true)
 app_dependencies += dependency('doca-flow', required : true)
 app_dependencies += dependency('doca-dpdk-bridge', required : true)
 
+app_dependencies += declare_dependency(link_args : ['-ltcmalloc'])
+
 dependency_protobuf = dependency('protobuf', required : true)
 dependency_grpc = dependency('grpc++', required : true)
 grpc_dependencies = [dependency_protobuf, dependency_grpc]
