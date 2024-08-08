@@ -37,6 +37,8 @@
 #include <doca_flow.h>
 #include <dpdk_utils.h>
 
+#include <nvtx3/nvtx3.hpp>
+
 // 0: PSP Header Version 0, AES-GCM-128
 // 1: PSP Header Version 0, AES-GCM-256
 // 2: PSP Header Version 0, AES-GMAC-128

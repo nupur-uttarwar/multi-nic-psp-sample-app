@@ -136,7 +136,6 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(const std::vector<psp_sess
 
 doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 {
-
 	if (config->create_tunnels_at_startup)
 		return DOCA_SUCCESS; // no action; tunnels to be created by the main loop
 
@@ -344,6 +343,8 @@ doca_error_t PSP_GatewayImpl::show_flow_counts(void)
 }
 
 doca_error_t PSP_GatewayImpl::init_devs(void) {
+	NVTX3_FUNC_RANGE();
+
 	doca_error_t result = DOCA_SUCCESS;
 	DOCA_LOG_INFO("Initializing PSP Gateway Devices");
 
@@ -366,6 +367,8 @@ doca_error_t PSP_GatewayImpl::init_devs(void) {
 }
 
 doca_error_t PSP_GatewayImpl::init_flows(void) {
+	NVTX3_FUNC_RANGE();
+
 	doca_error_t result = DOCA_SUCCESS;
 
 	IF_SUCCESS(result, init_doca_flow());
@@ -378,6 +381,8 @@ doca_error_t PSP_GatewayImpl::init_flows(void) {
 
 doca_error_t PSP_GatewayImpl::init_doca_flow(void)
 {
+	NVTX3_FUNC_RANGE();
+
 	doca_error_t result = DOCA_SUCCESS;
 	uint16_t nb_queues = config->dpdk_config.port_config.nb_queues;
 

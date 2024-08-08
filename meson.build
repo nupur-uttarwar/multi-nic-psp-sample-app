@@ -45,11 +45,11 @@ subdir('grpc')
 app_dependencies += grpc_dependencies
 app_dependencies += dependency_psp_gateway_grpc
 
+nvtx_dir = '/root/elliot/NVTX/c/include'
 doca_root_dir = dependency('doca-common').get_variable('prefix', default_value: '/opt/mellanox/doca')
-
 common_dir_path = doca_root_dir + '/applications/common'
 
-app_inc_dirs = [include_directories(common_dir_path, doca_root_dir)]
+app_inc_dirs = [include_directories(common_dir_path, doca_root_dir, nvtx_dir)]
 
 app_srcs = files([
 	APP_NAME + '.cpp',
