@@ -45,7 +45,7 @@ DOCA_LOG_REGISTER(PSP_GW_SVC);
 PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config)
 	: config(config)
 {
-	config->crypto_ids_per_nic = config->max_tunnels + 1;
+	config->crypto_ids_per_nic = 20000;
 
 	uint32_t crypto_id = 0;
 	for (psp_gw_nic_desc_t nic : config->net_config.local_nics) {
@@ -395,7 +395,7 @@ doca_error_t PSP_GatewayImpl::init_doca_flow(void)
 	struct doca_flow_cfg *flow_cfg;
 	IF_SUCCESS(result, doca_flow_cfg_create(&flow_cfg));
 	IF_SUCCESS(result, doca_flow_cfg_set_pipe_queues(flow_cfg, nb_queues));
-	IF_SUCCESS(result, doca_flow_cfg_set_nr_counters(flow_cfg, nb_nics * config->max_tunnels * NUM_OF_PSP_SYNDROMES + 10));
+	IF_SUCCESS(result, doca_flow_cfg_set_nr_counters(flow_cfg, nb_nics * 61024));
 	IF_SUCCESS(result, doca_flow_cfg_set_mode_args(flow_cfg, "switch,hws,isolated,expert"));
 	IF_SUCCESS(result, doca_flow_cfg_set_cb_entry_process(flow_cfg, PSP_GatewayImpl::check_for_valid_entry));
 	IF_SUCCESS(result, doca_flow_cfg_set_default_rss(flow_cfg, &rss_config));
