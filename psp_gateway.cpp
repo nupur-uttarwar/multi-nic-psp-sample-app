@@ -100,6 +100,9 @@ int main(int argc, char **argv)
 	app_config.show_rss_rx_packets = false;
 	app_config.show_rss_durations = false;
 	app_config.outer = DOCA_FLOW_L3_TYPE_IP6;
+	app_config.next_crypto_id = 0;
+	app_config.next_mirror_id = 1;
+	app_config.next_port_id = 0;
 
 	struct psp_pf_dev pf_dev = {};
 	std::string dev_probe_str;

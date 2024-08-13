@@ -134,7 +134,7 @@ public:
 	 * @param [in] app_config The application configuration
 	 * @param [in] crypto_id_start The starting index for crypto IDs.
 	 */
-	PSP_GatewayFlows(psp_gw_nic_desc_t &nic_info, psp_gw_app_config *app_config, uint32_t crypto_id_start);
+	PSP_GatewayFlows(psp_gw_nic_desc_t &nic_info, psp_gw_app_config *app_config);
 
 	/**
 	 * Deallocates all associated DOCA objects.
@@ -162,7 +162,7 @@ public:
 	 * @new_op_state [in]: the desired operational state of the PF device
 	 */
 	void set_pending_op_state(doca_flow_port_operation_state new_op_state);
-	
+
 	/**
 	 * @brief Attempt to set the operational mode of the PF device.
 	 *
@@ -172,7 +172,7 @@ public:
 
 	/**
 	 * @brief Queries the current op-state of the PF device
-	 * 
+	 *
 	 * @return: the current op-state
 	 */
 	doca_flow_port_operation_state get_op_state() const
@@ -182,7 +182,7 @@ public:
 
 	/**
 	 * @brief Queries whether the requested op-state is different from the current op-state
-	 * 
+	 *
 	 * @return: true if apply_pending_op_state() should be called, false if already in the
 	 *          requested state
 	 */

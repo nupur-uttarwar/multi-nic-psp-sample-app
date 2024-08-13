@@ -47,14 +47,11 @@ PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config)
 {
 	config->crypto_ids_per_nic = config->max_tunnels + 1;
 
-	uint32_t crypto_id = 0;
 	for (psp_gw_nic_desc_t nic : config->net_config.local_nics) {
 		psp_flows.push_back({
 			nic.pip,
-			new PSP_GatewayFlows(nic, config, crypto_id)
+			new PSP_GatewayFlows(nic, config)
 		});
-
-		crypto_id += config->crypto_ids_per_nic;
 	}
 
 	assert(psp_flows.size() > 0);

@@ -149,6 +149,7 @@ struct psp_gw_app_config {
 
 	uint16_t next_port_id; //<! Incremented during port creation to track the next port ID to assign
 	uint16_t next_mirror_id; //<! Incremented during port creation to track the next port ID to assign
+	uint32_t next_crypto_id; //<! Incremented during NIC object creation to track the next crypto ID to assign
 
 	uint32_t ingress_sample_meta_indicator; //!< Value to assign pkt_meta when sampling incoming packets
 	uint32_t egress_sample_meta_indicator;	//!< Value to assign pkt_meta when sampling outgoing packets

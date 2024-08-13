@@ -84,18 +84,17 @@ struct eth_ipv4_psp_tunnel_hdr {
 
 const uint8_t PSP_SAMPLE_ENABLE = 1 << 7;
 
-PSP_GatewayFlows::PSP_GatewayFlows(psp_gw_nic_desc_t &nic_info, psp_gw_app_config *app_config, uint32_t crypto_id_start)
+PSP_GatewayFlows::PSP_GatewayFlows(psp_gw_nic_desc_t &nic_info, psp_gw_app_config *app_config)
 	: app_config(app_config),
 	  nic_info(nic_info)
 {
 	monitor_count.counter_type = DOCA_FLOW_RESOURCE_TYPE_NON_SHARED;
 
-	for (uint32_t i = crypto_id_start; i < crypto_id_start + app_config->crypto_ids_per_nic; i++) {
-		available_crypto_ids.insert(i);
+	for (uint32_t i = 0; i < app_config->crypto_ids_per_nic; i++) {
+		available_crypto_ids.insert(app_config->next_crypto_id++);
 	}
-
-	mirror_res_id = ++app_config->next_mirror_id;
-	mirror_res_id_port = ++app_config->next_mirror_id;
+	mirror_res_id = app_config->next_mirror_id++;
+	mirror_res_id_port = app_config->next_mirror_id++;
 }
 
 PSP_GatewayFlows::~PSP_GatewayFlows()
