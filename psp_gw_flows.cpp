@@ -127,8 +127,8 @@ doca_error_t PSP_GatewayFlows::init_dev(void)
 	rte_eth_macaddr_get(pf_dev.pf_port_id, &pf_dev.pf_mac);
 	pf_dev.pf_mac_str = mac_to_string(pf_dev.pf_mac);
 
-	rte_eth_macaddr_get(pf_dev.vf_port_id, &pf_dev.vf_mac);
-	pf_dev.vf_mac_str = mac_to_string(pf_dev.vf_mac);
+	rte_eth_macaddr_get(pf_dev.vf_port_id, &pf_dev.vf_repr_mac);
+	pf_dev.vf_repr_mac_str = mac_to_string(pf_dev.vf_repr_mac);
 
 	if (app_config->outer == DOCA_FLOW_L3_TYPE_IP4) {
 		pf_dev.local_pip.type = DOCA_FLOW_L3_TYPE_IP4;
@@ -152,7 +152,7 @@ doca_error_t PSP_GatewayFlows::init_dev(void)
 		pf_dev.local_pip_str = ipv6_to_string(pf_dev.local_pip.ipv6_addr);
 	}
 
-	DOCA_LOG_INFO("Probed PF %s, VF %s on PCI %s", pf_dev.pf_mac_str.c_str(), pf_dev.vf_mac_str.c_str(), nic_info.pci.c_str());
+	DOCA_LOG_INFO("Probed PF %s, VF %s on PCI %s", pf_dev.pf_mac_str.c_str(), pf_dev.vf_repr_mac_str.c_str(), nic_info.pci.c_str());
 	return result;
 }
 
@@ -641,7 +641,7 @@ doca_error_t PSP_GatewayFlows::ingress_acl_pipe_create(void)
 	struct rte_ether_hdr *eth_hdr = (rte_ether_hdr *)actions.crypto_encap.encap_data;
 	eth_hdr->ether_type = RTE_BE16(RTE_ETHER_TYPE_IPV4);
 	eth_hdr->src_addr = pf_dev.pf_mac;
-	eth_hdr->dst_addr = app_config->dcap_dmac;
+	eth_hdr->dst_addr = nic_info.vfmac;
 
 	doca_flow_actions *actions_arr[] = {&actions};
 

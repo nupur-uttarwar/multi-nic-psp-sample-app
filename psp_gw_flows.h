@@ -62,8 +62,8 @@ struct psp_pf_dev {
 
 	uint16_t vf_port_id;
 	struct doca_flow_port *vf_port;
-	struct rte_ether_addr vf_mac;
-	std::string vf_mac_str;
+	struct rte_ether_addr vf_repr_mac;
+	std::string vf_repr_mac_str;
 
 	struct doca_flow_ip_addr local_pip; // Physical/Outer IP addr
 	std::string local_pip_str;

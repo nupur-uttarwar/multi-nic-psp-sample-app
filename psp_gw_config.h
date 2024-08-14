@@ -93,6 +93,7 @@ struct psp_gw_nic_desc_t {
 	std::vector<std::string> vips; /*!< virtual IP addresses */
 
 	rte_ether_addr nexthop_mac;
+	rte_ether_addr vfmac;
 };
 
 /**

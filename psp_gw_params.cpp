@@ -635,6 +635,29 @@ static doca_error_t parse_nexthop(json_object *json_obj_remote_addr,
 	return DOCA_SUCCESS;
 }
 
+static doca_error_t parse_vfmac(json_object *json_obj_remote_addr,
+					      psp_gw_app_config *app_config,
+					      void *data)
+{
+	(void)app_config;
+	struct psp_gw_nic_desc_t *host = (struct psp_gw_nic_desc_t *)data;
+
+	std::string vfmac_str;
+	doca_error_t result = json_object_ver_get_string(json_obj_remote_addr, vfmac_str);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Invalid vfmac, expected string");
+		return result;
+	}
+
+	int res = rte_ether_unformat_addr(vfmac_str.c_str(), &host->vfmac);
+	if (res != 0) {
+		DOCA_LOG_ERR("Invalid vfmac mac addr: %s", vfmac_str.c_str());
+		return DOCA_ERROR_INVALID_VALUE;
+	}
+
+	return DOCA_SUCCESS;
+}
+
 static doca_error_t parse_repr(json_object *json_obj_remote_addr,
 					      psp_gw_app_config *app_config,
 					      void *data)
@@ -790,6 +813,7 @@ static doca_error_t parse_json_hosts(json_object *json_obj_peers, psp_gw_app_con
 		psp_json_field_handlers handlers = {
 			{"hostname", parse_hostname, true},
 			{"nexthop", parse_nexthop, true},
+			{"vfmac", parse_vfmac, true},
 			{"grpc-address", parse_grpc_address, true},
 			{"pci", parse_pci, true},
 			{"repr", parse_repr, true},

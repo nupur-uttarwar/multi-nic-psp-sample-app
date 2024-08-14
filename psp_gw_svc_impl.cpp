@@ -214,7 +214,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 			response->add_tunnels_params());
 	}
 
-	std::vector<bool> remote_updated;
+	std::vector<bool> remote_updated(relevant_sessions.size(), true);
 	for (doca_error_t result : results) {
 		remote_updated.push_back(result == DOCA_SUCCESS);
 	}
