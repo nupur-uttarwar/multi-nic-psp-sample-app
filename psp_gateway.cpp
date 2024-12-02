@@ -30,6 +30,7 @@
 
 // dpdk
 #include <rte_ethdev.h>
+#include <rte_version.h>
 
 // doca
 #include <dpdk_utils.h>
@@ -122,6 +123,9 @@ int main(int argc, char **argv)
 	result = doca_log_backend_set_sdk_level(sdk_log, DOCA_LOG_LEVEL_WARNING);
 	if (result != DOCA_SUCCESS)
 		return EXIT_FAILURE;
+
+	DOCA_LOG_INFO("doca-flow version: %s", doca_version());
+	DOCA_LOG_INFO("libdpdk version: %s", rte_version());
 
 	signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);

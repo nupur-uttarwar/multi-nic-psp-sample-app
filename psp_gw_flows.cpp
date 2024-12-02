@@ -352,12 +352,12 @@ std::vector<doca_error_t> PSP_GatewayFlows::set_egress_paths(
 
 doca_error_t PSP_GatewayFlows::configure_mirrors(void)
 {
-	assert(rss_pipe);
+	assert(rss_pipe_ingress);
 	doca_error_t result = DOCA_SUCCESS;
 
 	struct doca_flow_mirror_target mirr_tgt = {};
 	mirr_tgt.fwd.type = DOCA_FLOW_FWD_PIPE;
-	mirr_tgt.fwd.next_pipe = rss_pipe;
+	mirr_tgt.fwd.next_pipe = rss_pipe_ingress;
 
 	struct doca_flow_shared_resource_cfg res_cfg = {};
 	res_cfg.domain = DOCA_FLOW_PIPE_DOMAIN_EGRESS;
@@ -392,7 +392,8 @@ doca_error_t PSP_GatewayFlows::create_pipes(void)
 {
 	doca_error_t result = DOCA_SUCCESS;
 
-	IF_SUCCESS(result, rss_pipe_create());
+	IF_SUCCESS(result, rss_pipe_create(true));
+	IF_SUCCESS(result, rss_pipe_create(false));
 	IF_SUCCESS(result, configure_mirrors());
 	IF_SUCCESS(result, syndrome_stats_pipe_create());
 	IF_SUCCESS(result, ingress_acl_pipe_create());
@@ -542,7 +543,7 @@ doca_error_t PSP_GatewayFlows::add_single_entry(uint16_t pipe_queue,
 	return result;
 }
 
-doca_error_t PSP_GatewayFlows::rss_pipe_create(void)
+doca_error_t PSP_GatewayFlows::rss_pipe_create(bool ingress)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
 	doca_error_t result = DOCA_SUCCESS;
@@ -559,14 +560,15 @@ doca_error_t PSP_GatewayFlows::rss_pipe_create(void)
 
 	struct doca_flow_pipe_cfg *pipe_cfg;
 	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev.pf_port));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_name(pipe_cfg, "RSS_PIPE"));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_name(pipe_cfg, ingress ? "RSS_PIPE_INGRESS" : "RSS_PIPE_EGRESS"));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, 1));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_domain(pipe_cfg, ingress ? DOCA_FLOW_PIPE_DOMAIN_DEFAULT : DOCA_FLOW_PIPE_DOMAIN_EGRESS));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_monitor(pipe_cfg, &monitor_count));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &empty_match, nullptr));
-	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd, nullptr, &rss_pipe));
+	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd, nullptr, ingress ? &rss_pipe_ingress : &rss_pipe_egress));
 	IF_SUCCESS(
 		result,
-		add_single_entry(0, rss_pipe, pf_dev.pf_port, nullptr, nullptr, nullptr, nullptr, &default_rss_entry));
+		add_single_entry(0, ingress ? rss_pipe_ingress : rss_pipe_egress, pf_dev.pf_port, nullptr, nullptr, nullptr, nullptr, ingress ? &default_rss_entry_ingress : &default_rss_entry_egress));
 
 	if (pipe_cfg)
 		doca_flow_pipe_cfg_destroy(pipe_cfg);
@@ -693,7 +695,7 @@ doca_error_t PSP_GatewayFlows::ingress_sampling_pipe_create(void)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
 	assert(mirror_res_id);
-	assert(rss_pipe);
+	assert(rss_pipe_ingress);
 	assert(sampling_enabled());
 	doca_error_t result = DOCA_SUCCESS;
 
@@ -706,7 +708,7 @@ doca_error_t PSP_GatewayFlows::ingress_sampling_pipe_create(void)
 	mirror_action.shared_mirror_id = mirror_res_id;
 
 	struct doca_flow_actions set_meta = {};
-	set_meta.meta.pkt_meta = app_config->ingress_sample_meta_indicator;
+	set_meta.meta.pkt_meta = rte_cpu_to_be_32(app_config->ingress_sample_meta_indicator);
 
 	struct doca_flow_actions *actions_arr[] = {&set_meta};
 
@@ -752,7 +754,7 @@ doca_error_t PSP_GatewayFlows::ingress_decrypt_pipe_create(void)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
 	assert(sampling_enabled() ? ingress_sampling_pipe : ingress_acl_pipe);
-	assert(rss_pipe);
+	assert(rss_pipe_ingress);
 	doca_error_t result = DOCA_SUCCESS;
 
 	doca_flow_match match = {};
@@ -859,7 +861,7 @@ doca_error_t PSP_GatewayFlows::egress_sampling_pipe_create(void)
 	match_sampling_match.parser_meta.random = 0x1;
 
 	doca_flow_actions set_sample_bit = {};
-	set_sample_bit.meta.pkt_meta = app_config->egress_sample_meta_indicator;
+	set_sample_bit.meta.pkt_meta = rte_cpu_to_be_32(app_config->egress_sample_meta_indicator);
 	set_sample_bit.tun.type = DOCA_FLOW_TUN_PSP;
 	set_sample_bit.tun.psp.s_d_ver_v = PSP_SAMPLE_ENABLE;
 	doca_flow_actions *actions_arr[] = {&set_sample_bit};
@@ -880,7 +882,7 @@ doca_error_t PSP_GatewayFlows::egress_sampling_pipe_create(void)
 
 	doca_flow_fwd fwd_rss = {};
 	fwd_rss.type = DOCA_FLOW_FWD_PIPE;
-	fwd_rss.next_pipe = rss_pipe;
+	fwd_rss.next_pipe = rss_pipe_egress;
 
 	doca_flow_pipe_cfg *pipe_cfg;
 	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev.pf_port));
@@ -913,7 +915,7 @@ doca_error_t PSP_GatewayFlows::egress_sampling_pipe_create(void)
 doca_error_t PSP_GatewayFlows::egress_acl_pipe_create(void)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
-	assert(rss_pipe);
+	assert(rss_pipe_egress);
 	assert(!sampling_enabled() || egress_sampling_pipe);
 	doca_error_t result = DOCA_SUCCESS;
 
@@ -962,7 +964,7 @@ doca_error_t PSP_GatewayFlows::egress_acl_pipe_create(void)
 
 	doca_flow_fwd fwd_miss = {};
 	fwd_miss.type = DOCA_FLOW_FWD_PIPE;
-	fwd_miss.next_pipe = rss_pipe;
+	fwd_miss.next_pipe = rss_pipe_egress;
 
 	doca_flow_pipe_cfg *pipe_cfg;
 	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev.pf_port));
@@ -1085,7 +1087,7 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 
 	doca_flow_fwd fwd_rss = {};
 	fwd_rss.type = DOCA_FLOW_FWD_PIPE;
-	fwd_rss.next_pipe = rss_pipe;
+	fwd_rss.next_pipe = rss_pipe_ingress;
 
 	doca_flow_fwd fwd_miss = {};
 	fwd_miss.type = DOCA_FLOW_FWD_DROP;
@@ -1483,7 +1485,8 @@ std::pair<uint64_t, uint64_t> PSP_GatewayFlows::perform_pipe_query(pipe_query *q
 void PSP_GatewayFlows::show_static_flow_counts(void)
 {
 	std::vector<pipe_query> queries;
-	queries.emplace_back(pipe_query{nullptr, default_rss_entry, "rss_pipe"});
+	queries.emplace_back(pipe_query{nullptr, default_rss_entry_ingress, "rss_pipe_ingress"});
+	queries.emplace_back(pipe_query{nullptr, default_rss_entry_egress, "rss_pipe_egress"});
 	queries.emplace_back(pipe_query{nullptr, root_jump_to_ingress_ipv6_entry, "root_jump_to_ingress_ipv6_entry"});
 	queries.emplace_back(pipe_query{nullptr, root_jump_to_ingress_ipv4_entry, "root_jump_to_ingress_ipv4_entry"});
 	queries.emplace_back(pipe_query{nullptr, root_jump_to_egress_entry, "root_jump_to_egress_entry"});

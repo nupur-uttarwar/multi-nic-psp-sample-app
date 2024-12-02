@@ -294,7 +294,7 @@ private:
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	doca_error_t rss_pipe_create(void);
+	doca_error_t rss_pipe_create(bool ingress);
 
 	/**
 	 * Creates the pipe which counts the various syndrome types
@@ -463,7 +463,8 @@ private:
 	std::unordered_map<psp_session_desc_t, psp_session_egress_t, psp_session_desc_hash, psp_session_desc_eq> egress_sessions;
 
 	// general pipes
-	struct doca_flow_pipe *rss_pipe{};
+	struct doca_flow_pipe *rss_pipe_ingress{};
+	struct doca_flow_pipe *rss_pipe_egress{};
 	struct doca_flow_pipe *ingress_root_pipe{};
 
 	// net-to-host pipes
@@ -480,7 +481,8 @@ private:
 	struct doca_flow_pipe *empty_pipe_not_sampled{};
 
 	// static pipe entries
-	struct doca_flow_pipe_entry *default_rss_entry{};
+	struct doca_flow_pipe_entry *default_rss_entry_ingress{};
+	struct doca_flow_pipe_entry *default_rss_entry_egress{};
 	struct doca_flow_pipe_entry *default_decrypt_entry{};
 	struct doca_flow_pipe_entry *default_ingr_sampling_entry{};
 	struct doca_flow_pipe_entry *default_ingr_acl_entry{};
