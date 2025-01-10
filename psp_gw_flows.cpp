@@ -554,9 +554,10 @@ doca_error_t PSP_GatewayFlows::rss_pipe_create(bool ingress)
 	uint16_t rss_queues[1] = {0};
 	struct doca_flow_fwd fwd = {};
 	fwd.type = DOCA_FLOW_FWD_RSS;
-	fwd.rss_outer_flags = DOCA_FLOW_RSS_IPV4 | DOCA_FLOW_RSS_IPV6;
-	fwd.num_of_queues = 1;
-	fwd.rss_queues = rss_queues;
+	fwd.rss_type = DOCA_FLOW_RESOURCE_TYPE_NON_SHARED;
+	fwd.rss.outer_flags = DOCA_FLOW_RSS_IPV4 | DOCA_FLOW_RSS_IPV6;
+	fwd.rss.nr_queues = 1;
+	fwd.rss.queues_array = rss_queues;
 
 	struct doca_flow_pipe_cfg *pipe_cfg;
 	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev.pf_port));
