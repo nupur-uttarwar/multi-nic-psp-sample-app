@@ -44,7 +44,7 @@ DOCA_LOG_REGISTER(PSP_GATEWAY);
 
 static const uint32_t DEFAULT_TIMEOUT_US = 10000; /* default timeout for processing entries */
 static const uint32_t PSP_ICV_SIZE = 16;
-
+static const uint32_t MAX_ACTIONS_MEM_SIZE = 8388608 * 64;
 
 /**
  * @brief packet header structure to simplify populating the encap_data array for encap ipv6 data
@@ -427,6 +427,7 @@ doca_error_t PSP_GatewayFlows::start_port(uint16_t port_id, doca_dev *port_dev, 
 	std::string port_id_str = std::to_string(port_id); // note that set_devargs() clones the string contents
 	IF_SUCCESS(result, doca_flow_port_cfg_set_devargs(port_cfg, port_id_str.c_str()));
 	IF_SUCCESS(result, doca_flow_port_cfg_set_dev(port_cfg, port_dev));
+    IF_SUCCESS(result, doca_flow_port_cfg_set_actions_mem_size(port_cfg, rte_align32pow2(MAX_ACTIONS_MEM_SIZE)));
 	if (port_dev) {
 		IF_SUCCESS(result, doca_flow_port_cfg_set_operation_state(port_cfg, op_state));
 	}

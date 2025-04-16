@@ -44,6 +44,7 @@ grpc_dependencies = [dependency_protobuf, dependency_grpc]
 subdir('grpc')
 app_dependencies += grpc_dependencies
 app_dependencies += dependency_psp_gateway_grpc
+app_dependencies += dependency('libmlx5', required: true)
 
 doca_root_dir = dependency('doca-common').get_variable('prefix', default_value: '/opt/mellanox/doca')
 
