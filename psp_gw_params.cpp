@@ -877,6 +877,15 @@ doca_error_t psp_gw_parse_config_file(psp_gw_app_config *app_config)
 	return DOCA_SUCCESS;
 }
 
+doca_error_t handle_memory_tracking_param(void *param, void *config)
+{
+	auto *app_config = (struct psp_gw_app_config *)config;
+	app_config->memory_tracking_enabled = true;
+	app_config->memory_log_path = (char*)param;
+	DOCA_LOG_INFO("Memory tracking enabled, log file: %s", app_config->memory_log_path.c_str());
+	return DOCA_SUCCESS;
+}
+
 /**
  * @brief Registers command-line arguments to the application.
  *
@@ -1020,6 +1029,16 @@ static doca_error_t psp_gw_register_params(void)
 					      "outer-ip-type",
 					      "outer IP type",
 					      handle_outer_param,
+					      DOCA_ARGP_TYPE_STRING,
+					      false,
+					      false);
+	if (result != DOCA_SUCCESS)
+		return result;
+
+	result = psp_gw_register_single_param(nullptr,
+					      "memory-log",
+					      "Enable memory tracking and specify log file path",
+					      handle_memory_tracking_param,
 					      DOCA_ARGP_TYPE_STRING,
 					      false,
 					      false);

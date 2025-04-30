@@ -35,6 +35,7 @@
 #include <psp_gateway.grpc.pb.h>
 #include "psp_gw_config.h"
 #include "psp_gw_flows.h"
+#include "psp_gw_memory.h"
 
 struct psp_pf_dev;
 struct doca_flow_crypto_psp_spi_key_bulk;
@@ -207,6 +208,8 @@ private:
 	std::map<std::string, std::shared_ptr<::psp_gateway::PSP_Gateway::Stub>> stubs;
 
 	std::vector<struct lcore_params> lcore_params_list;
+
+	PSPMemoryTracker memory_tracker;
 };
 
 #endif // _PSP_GW_SVC_H

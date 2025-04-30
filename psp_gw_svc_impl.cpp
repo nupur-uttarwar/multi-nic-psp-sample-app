@@ -43,7 +43,7 @@
 DOCA_LOG_REGISTER(PSP_GW_SVC);
 
 PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config)
-	: config(config)
+	: config(config), memory_tracker(config)
 {
 	config->crypto_ids_per_nic = config->max_tunnels + 1;
 
@@ -55,6 +55,11 @@ PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config)
 	}
 
 	assert(psp_flows.size() > 0);
+
+	if (memory_tracker.init() != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to initialize memory tracker");
+	}
+	memory_tracker.log_stats("Service startup");
 }
 
 PSP_GatewayImpl::~PSP_GatewayImpl()
@@ -120,6 +125,7 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(const std::vector<psp_sess
 			if (check_any_failed(results)) {
 				DOCA_LOG_ERR("Failed to set egress paths for %s", session_descs[i].remote_vip.c_str());
 			}
+			memory_tracker.log_stats("add_tunnel_to_host");
 		}
 	}
 
@@ -386,6 +392,7 @@ doca_error_t PSP_GatewayImpl::init_flows(void) {
 	IF_SUCCESS(result, init_doca_flow());
 	for (auto &pair : psp_flows) {
 		IF_SUCCESS(result, pair.second->init_flows());
+		memory_tracker.log_stats("init_flows");
 	}
 
 	return result;
@@ -426,6 +433,8 @@ doca_error_t PSP_GatewayImpl::init_doca_flow(void)
 
 	if (flow_cfg)
 		doca_flow_cfg_destroy(flow_cfg);
+
+	memory_tracker.log_stats("init_doca_flow");
 	return result;
 }
 
