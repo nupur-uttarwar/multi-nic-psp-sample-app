@@ -295,18 +295,36 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 	return ::grpc::Status::OK;
 }
 
-size_t PSP_GatewayImpl::try_connect(std::vector<psp_gw_nic_desc_t> &hosts, rte_be32_t local_vf_addr)
+size_t PSP_GatewayImpl::try_connect(std::vector<psp_gw_nic_desc_t> &remote_hosts)
 {
 	size_t num_connected = 0;
-	// for (auto host_iter = hosts.begin(); host_iter != hosts.end(); /* increment below */) {
-	// 	doca_error_t result = request_tunnel_to_host(&*host_iter, local_vf_addr, 0, false, true, false);
-	// 	if (result == DOCA_SUCCESS) {
-	// 		++num_connected;
-	// 		host_iter = hosts.erase(host_iter);
-	// 	} else {
-	// 		++host_iter;
-	// 	}
-	// }
+	for (auto remote_host_iter = remote_hosts.begin(); remote_host_iter != remote_hosts.end();) {
+		for (auto remote_vip_iter = remote_host_iter->vips.begin(); remote_vip_iter != remote_host_iter->vips.end();) {
+			bool any_success = false;
+			for (auto &local_nic_iter : config->net_config.local_nics) {
+				psp_session_desc_t session;
+				session.local_vip = local_nic_iter.vips[0];
+				session.remote_vip = *remote_vip_iter;
+				session.remote_pip = remote_host_iter->pip;
+				doca_error_t result = request_tunnels_to_host({session});
+				if (result == DOCA_SUCCESS) {
+					any_success = true;
+					break;
+				}
+			}
+			if (any_success) {
+				++num_connected;
+				remote_vip_iter = remote_host_iter->vips.erase(remote_vip_iter);
+			} else {
+				++remote_vip_iter;
+			}
+		}
+		if (remote_host_iter->vips.empty()) {
+			remote_host_iter = remote_hosts.erase(remote_host_iter);
+		} else {
+			++remote_host_iter;
+		}
+	}
 	return num_connected;
 }
 

@@ -152,10 +152,9 @@ public:
 	 * method can be called repeatedly with the same list.
 	 *
 	 * @hosts [in/out]: the list of tunnels to try to establish
-	 * @local_vf_addrs [in]: the IP address of the local VF netdev
 	 * @return: the number of hosts successfully connected and removed from 'hosts'
 	 */
-	size_t try_connect(std::vector<psp_gw_nic_desc_t> &hosts, rte_be32_t local_vf_addr);
+	size_t try_connect(std::vector<psp_gw_nic_desc_t> &hosts);
 
 	doca_error_t init_devs();
 	doca_error_t init_flows();
