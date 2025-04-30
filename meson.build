@@ -59,6 +59,7 @@ app_srcs = files([
 	'psp_gw_svc_impl.cpp',
 	'psp_gw_pkt_rss.cpp',
 	'psp_gw_utils.cpp',
+	'psp_gw_memory.cpp',
 	common_dir_path + '/dpdk_utils.c',
 	common_dir_path + '/pack.c',
 	common_dir_path + '/utils.c',

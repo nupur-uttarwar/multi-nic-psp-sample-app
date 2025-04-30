@@ -707,6 +707,63 @@ static doca_error_t parse_pip(json_object *json_obj_remote_addr,
 }
 
 /**
+ * @brief Parse a subnet mask string and return all IPs in the subnet
+ * 
+ * @param subnet_str The subnet string in format "IP/mask" (e.g. "192.168.1.0/24")
+ * @param ips [out] Vector to store the resulting IPs
+ * @return doca_error_t DOCA_SUCCESS on success, error code otherwise
+ */
+static doca_error_t parse_subnet_ips(const std::string &subnet_str, std::vector<std::string> &ips)
+{
+	size_t slash_pos = subnet_str.find('/');
+	if (slash_pos == std::string::npos) {
+		// Not a subnet, just add the single IP
+		ips.push_back(subnet_str);
+		return DOCA_SUCCESS;
+	}
+
+	// Extract subnet mask length
+	std::string mask_str = subnet_str.substr(slash_pos + 1);
+	int mask_len = atoi(mask_str.c_str());
+	if (mask_len == 0 && mask_str != "0") {
+		DOCA_LOG_ERR("Invalid subnet mask length in VIP: %s", subnet_str.c_str());
+		return DOCA_ERROR_INVALID_VALUE;
+	}
+
+	// Validate mask length
+	if (mask_len < 8 || mask_len > 32) {
+		DOCA_LOG_ERR("Subnet mask length must be between 8 and 32: %s", subnet_str.c_str());
+		return DOCA_ERROR_INVALID_VALUE;
+	}
+
+	// Extract base IP
+	std::string base_ip = subnet_str.substr(0, slash_pos);
+	struct in_addr addr;
+	if (inet_pton(AF_INET, base_ip.c_str(), &addr) != 1) {
+		DOCA_LOG_ERR("Invalid base IP in VIP: %s", base_ip.c_str());
+		return DOCA_ERROR_INVALID_VALUE;
+	}
+
+	// Calculate number of IPs in subnet
+	uint32_t num_ips = 1 << (32 - mask_len);
+	uint32_t base_ip_int = ntohl(addr.s_addr);
+	uint32_t mask = ~((1 << (32 - mask_len)) - 1);
+	uint32_t network_addr = base_ip_int & mask;
+
+	// Add each IP in the subnet
+	for (uint32_t i = 0; i < num_ips; i++) {
+		uint32_t ip = network_addr + i;
+		struct in_addr ip_addr;
+		ip_addr.s_addr = htonl(ip);
+		char ip_str[INET_ADDRSTRLEN];
+		inet_ntop(AF_INET, &ip_addr, ip_str, INET_ADDRSTRLEN);
+		ips.push_back(ip_str);
+	}
+
+	return DOCA_SUCCESS;
+}
+
+/**
  * @brief Parses the remote gRPC address
  *
  * @json_obj_remote_addr [in]: JSON object
@@ -771,7 +828,14 @@ static doca_error_t parse_vips(json_object *json_obj_remote_vips, psp_gw_app_con
 			return result;
 		}
 
-		host->vips.push_back(vip_str);
+		std::vector<std::string> ips;
+		result = parse_subnet_ips(vip_str, ips);
+		if (result != DOCA_SUCCESS) {
+			return result;
+		}
+
+		// Add all IPs to the host's VIP list
+		host->vips.insert(host->vips.end(), ips.begin(), ips.end());
 	}
 
 	return DOCA_SUCCESS;
@@ -874,6 +938,15 @@ doca_error_t psp_gw_parse_config_file(psp_gw_app_config *app_config)
 
 	DOCA_LOG_DBG("Successfully parsed JSON file");
 
+	return DOCA_SUCCESS;
+}
+
+doca_error_t handle_memory_tracking_param(void *param, void *config)
+{
+	auto *app_config = (struct psp_gw_app_config *)config;
+	app_config->memory_tracking_enabled = true;
+	app_config->memory_log_path = (char*)param;
+	DOCA_LOG_INFO("Memory tracking enabled, log file: %s", app_config->memory_log_path.c_str());
 	return DOCA_SUCCESS;
 }
 
@@ -1020,6 +1093,16 @@ static doca_error_t psp_gw_register_params(void)
 					      "outer-ip-type",
 					      "outer IP type",
 					      handle_outer_param,
+					      DOCA_ARGP_TYPE_STRING,
+					      false,
+					      false);
+	if (result != DOCA_SUCCESS)
+		return result;
+
+	result = psp_gw_register_single_param(nullptr,
+					      "memory-log",
+					      "Enable memory tracking and specify log file path",
+					      handle_memory_tracking_param,
 					      DOCA_ARGP_TYPE_STRING,
 					      false,
 					      false);

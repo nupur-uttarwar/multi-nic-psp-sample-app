@@ -134,6 +134,10 @@ struct psp_gw_app_config {
 
 	struct psp_gw_net_config net_config; //!< List of remote hosts supporting PSP connections
 
+	// Memory tracking configuration
+	bool memory_tracking_enabled;  //!< Whether memory tracking is enabled
+	std::string memory_log_path;  //!< Path to the memory tracking log file
+
 	/**
 	 * The rate of sampling user packets is controlled by a uint16_t mask.
 	 * This parameter determines how many bits of the mask should be set,

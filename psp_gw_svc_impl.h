@@ -35,6 +35,7 @@
 #include <psp_gateway.grpc.pb.h>
 #include "psp_gw_config.h"
 #include "psp_gw_flows.h"
+#include "psp_gw_memory.h"
 
 struct psp_pf_dev;
 struct doca_flow_crypto_psp_spi_key_bulk;
@@ -152,10 +153,9 @@ public:
 	 * method can be called repeatedly with the same list.
 	 *
 	 * @hosts [in/out]: the list of tunnels to try to establish
-	 * @local_vf_addrs [in]: the IP address of the local VF netdev
 	 * @return: the number of hosts successfully connected and removed from 'hosts'
 	 */
-	size_t try_connect(std::vector<psp_gw_nic_desc_t> &hosts, rte_be32_t local_vf_addr);
+	size_t try_connect(std::vector<psp_gw_nic_desc_t> &hosts);
 
 	doca_error_t init_devs();
 	doca_error_t init_flows();
@@ -208,6 +208,8 @@ private:
 	std::map<std::string, std::shared_ptr<::psp_gateway::PSP_Gateway::Stub>> stubs;
 
 	std::vector<struct lcore_params> lcore_params_list;
+
+	PSPMemoryTracker memory_tracker;
 };
 
 #endif // _PSP_GW_SVC_H

@@ -190,18 +190,12 @@ int main(int argc, char **argv)
 		// Otherwise, this list will be left empty and tunnels will be created
 		// on demand via the miss path.
 		std::vector<psp_gw_nic_desc_t> remotes_to_connect;
-		rte_be32_t local_vf_addr = 0;
 		if (app_config.create_tunnels_at_startup) {
-			if (inet_pton(AF_INET, app_config.local_vf_addr.c_str(), &local_vf_addr) != 1) {
-				DOCA_LOG_ERR("Invalid local_vf_addr: %s", app_config.local_vf_addr.c_str());
-				exit_status = EXIT_FAILURE;
-				goto dpdk_destroy;
-			}
 			remotes_to_connect = app_config.net_config.remote_nics;
 		}
 
 		while (!force_quit) {
-			psp_svc.try_connect(remotes_to_connect, local_vf_addr);
+			psp_svc.try_connect(remotes_to_connect);
 			sleep(1);
 
 			if (app_config.print_stats) {
