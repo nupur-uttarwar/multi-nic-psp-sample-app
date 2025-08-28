@@ -97,8 +97,9 @@ int lcore_pkt_proc_func(void *lcore_args)
 	}
 
 	uint16_t queue_id = lcore_id - 1;
+	uint16_t nb_nics = params->pf_port_id_list.size();
+	struct rte_mbuf *rx_packets[nb_nics][MAX_RX_BURST_SIZE];
 
-	struct rte_mbuf *rx_packets[MAX_RX_BURST_SIZE];
 
 	double tsc_to_seconds = 1.0 / (double)rte_get_timer_hz();
 
@@ -110,27 +111,26 @@ int lcore_pkt_proc_func(void *lcore_args)
 		// handle high-rate tasks:
 		params->psp_svc->lcore_callback();
 
-		uint16_t nb_rx_packets = rte_eth_rx_burst(params->pf_port_id, queue_id, rx_packets, MAX_RX_BURST_SIZE);
+		for(int port_id = 0; port_id < nb_nics; port_id++) {
+			uint16_t nb_rx_packets = rte_eth_rx_burst(params->pf_port_id_list[port_id], queue_id, rx_packets[port_id], MAX_RX_BURST_SIZE);
+			for (int i = 0; i < nb_rx_packets && !*params->force_quit; i++) {
+				handle_packet(params, params->pf_port_id_list[port_id], queue_id, rx_packets[port_id][i]);
+			}
 
-		if (!nb_rx_packets)
-			continue;
-
-		for (int i = 0; i < nb_rx_packets && !*params->force_quit; i++) {
-			handle_packet(params, params->pf_port_id, queue_id, rx_packets[i]);
-		}
-
-		rte_pktmbuf_free_bulk(rx_packets, nb_rx_packets);
-
-		if (params->config->show_rss_durations) {
-			double sec = (double)(rte_rdtsc() - t_start) * tsc_to_seconds;
-			DOCA_LOG_INFO("L-Core %d port %d: processed %d packets in %f seconds",
-				      lcore_id,
-				      params->pf_port_id,
-				      nb_rx_packets,
-				      sec);
+			if (nb_rx_packets) {
+				DOCA_LOG_INFO("%d packets on port id %d", nb_rx_packets, params->pf_port_id_list[port_id]);
+				rte_pktmbuf_free_bulk(rx_packets[port_id], nb_rx_packets);
+			}
+			if (nb_rx_packets && params->config->show_rss_durations) {
+				double sec = (double)(rte_rdtsc() - t_start) * tsc_to_seconds;
+				DOCA_LOG_INFO("L-Core %d port %d: processed %d packets in %f seconds",
+						lcore_id,
+						params->pf_port_id_list[port_id],
+						nb_rx_packets,
+						sec);
+			}
 		}
 	}
-	DOCA_LOG_INFO("L-Core %d exiting", lcore_id);
 
 	return 0;
 }

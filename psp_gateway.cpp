@@ -69,6 +69,13 @@ static void signal_handler(int signum)
 	}
 }
 
+static double
+get_us(uint64_t start, uint64_t end, uint64_t freq)
+{
+        double d = (double)(end - start);
+        return d * 1000000 / (double)freq;
+}
+
 /*
  * @brief PSP Gateway application main function
  *
@@ -78,6 +85,7 @@ static void signal_handler(int signum)
  */
 int main(int argc, char **argv)
 {
+        uint64_t start = rte_rdtsc_precise();
 	doca_error_t result;
 	int nb_ports = 2;
 	int exit_status = EXIT_SUCCESS;
@@ -87,10 +95,12 @@ int main(int argc, char **argv)
 	app_config.dpdk_config.port_config.nb_queues = 2;
 	app_config.dpdk_config.port_config.switch_mode = true;
 	app_config.dpdk_config.port_config.enable_mbuf_metadata = true;
-	app_config.dpdk_config.port_config.isolated_mode = true;
+	app_config.dpdk_config.port_config.mbuf_size = 8192 + RTE_PKTMBUF_HEADROOM;
+	// Starting DOCA 3.1, switch mode is always isolated
 	app_config.dpdk_config.reserve_main_thread = true;
-	app_config.core_mask = strdup("0x1ff");
-	app_config.max_tunnels = 128;
+	app_config.core_mask = strdup("0x1f");
+	app_config.max_tunnels = 20000; //Customer uses 20K PSP tunnels
+	app_config.multithreaded = true;
 	app_config.net_config.vc_enabled = false;
 	app_config.net_config.crypt_offset = app_config.net_config.vc_enabled ? DEFAULT_CRYPT_OFFSET_VC_ENABLED : DEFAULT_CRYPT_OFFSET;
 	app_config.net_config.default_psp_proto_ver = DEFAULT_PSP_VERSION;
@@ -109,6 +119,7 @@ int main(int argc, char **argv)
 	std::string dev_probe_str;
 
 	struct doca_log_backend *sdk_log;
+	uint8_t nb_pfs = 0;
 
 	// Register a logger backend
 	result = doca_log_backend_create_standard();
@@ -140,86 +151,102 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	PSP_GatewayImpl psp_svc(&app_config);
-
-	// probe devices
-	result = psp_svc.init_devs();
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to probe device");
-		exit_status = EXIT_FAILURE;
-		goto dpdk_destroy;
-	}
-
-	app_config.dpdk_config.port_config.nb_ports = rte_eth_dev_count_avail();
-
-	// Update queues and ports
-	result = dpdk_queues_and_ports_init(&app_config.dpdk_config);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to update application ports and queues: %s", doca_error_get_descr(result));
-		exit_status = EXIT_FAILURE;
-		goto dpdk_destroy;
-	}
-
-	// initialize static pipeline
-	result = psp_svc.init_flows();
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to initialize PSP Gateway Flows: %s", doca_error_get_descr(result));
-		exit_status = EXIT_FAILURE;
-		goto dpdk_destroy;
-	}
-
 	{
-		psp_svc.launch_lcores(&force_quit);
+		PSP_GatewayImpl psp_svc(&app_config);
 
-		std::string server_address = app_config.local_svc_addr;
-		if (server_address.empty()) {
-			server_address = "0.0.0.0";
+		// probe devices
+		result = psp_svc.init_devs();
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to probe device");
+			exit_status = EXIT_FAILURE;
+			goto dpdk_cleanup;
 		}
-		if (server_address.find(":") == std::string::npos) {
-			server_address += ":" + std::to_string(PSP_GatewayImpl::DEFAULT_HTTP_PORT_NUM);
-		}
-		grpc::ServerBuilder builder;
-		builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
-		builder.RegisterService(&psp_svc);
-		auto server_instance = builder.BuildAndStart();
-		std::cout << "Server listening on " << server_address << std::endl;
 
-		// If configured to create all tunnels at startup, create a list of
-		// pending tunnels here. Each invocation of try_connect will
-		// remove entries from the list as tunnels are created.
-		// Otherwise, this list will be left empty and tunnels will be created
-		// on demand via the miss path.
-		std::vector<psp_gw_nic_desc_t> remotes_to_connect;
-		rte_be32_t local_vf_addr = 0;
-		if (app_config.create_tunnels_at_startup) {
-			if (inet_pton(AF_INET, app_config.local_vf_addr.c_str(), &local_vf_addr) != 1) {
-				DOCA_LOG_ERR("Invalid local_vf_addr: %s", app_config.local_vf_addr.c_str());
-				exit_status = EXIT_FAILURE;
-				goto dpdk_destroy;
+		app_config.dpdk_config.port_config.nb_ports = rte_eth_dev_count_avail();
+		nb_pfs = app_config.dpdk_config.port_config.nb_ports / 2;
+
+		// Update queues and ports
+		result = dpdk_queues_and_ports_init(&app_config.dpdk_config);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to update application ports and queues: %s", doca_error_get_descr(result));
+			exit_status = EXIT_FAILURE;
+			goto dev_rep_close;
+		}
+
+		// initialize static pipeline
+		uint64_t freq = rte_get_tsc_hz();
+		uint64_t start_1 = rte_rdtsc_precise();
+		result = psp_svc.init_flows();
+		uint64_t end_1 = rte_rdtsc_precise();
+		DOCA_LOG_INFO("Total start_port time for %d ports took %0.3lf us", nb_pfs, get_us(start_1, end_1, freq));
+		DOCA_LOG_INFO("Average start_port per port took %0.3lf us", get_us(start_1, end_1, freq)/nb_pfs);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to initialize PSP Gateway Flows: %s", doca_error_get_descr(result));
+			exit_status = EXIT_FAILURE;
+			goto dpdk_destroy;
+		}
+
+		{
+			psp_svc.launch_lcores(&force_quit);
+
+			std::string server_address = app_config.local_svc_addr;
+			if (server_address.empty()) {
+				server_address = "0.0.0.0";
 			}
-			remotes_to_connect = app_config.net_config.remote_nics;
-		}
-
-		while (!force_quit) {
-			psp_svc.try_connect(remotes_to_connect, local_vf_addr);
-			sleep(1);
-
-			if (app_config.print_stats) {
-				psp_svc.show_flow_counts();
+			if (server_address.find(":") == std::string::npos) {
+				server_address += ":" + std::to_string(PSP_GatewayImpl::DEFAULT_HTTP_PORT_NUM);
 			}
+			grpc::ServerBuilder builder;
+			builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+			builder.RegisterService(&psp_svc);
+			auto server_instance = builder.BuildAndStart();
+			uint64_t end = rte_rdtsc_precise();
+			DOCA_LOG_INFO("Total init time for %d ports took %0.3lf us", nb_pfs, get_us(start, end, freq));
+			DOCA_LOG_INFO("Average init time per port took %0.3lf us", get_us(start, end, freq)/nb_pfs);
+			std::cout << "Server listening on " << server_address << std::endl;
+
+			// If configured to create all tunnels at startup, create a list of
+			// pending tunnels here. Each invocation of try_connect will
+			// remove entries from the list as tunnels are created.
+			// Otherwise, this list will be left empty and tunnels will be created
+			// on demand via the miss path.
+			std::vector<psp_gw_nic_desc_t> remotes_to_connect;
+			rte_be32_t local_vf_addr = 0;
+			if (app_config.create_tunnels_at_startup) {
+				if (inet_pton(AF_INET, app_config.local_vf_addr.c_str(), &local_vf_addr) != 1) {
+					DOCA_LOG_ERR("Invalid local_vf_addr: %s", app_config.local_vf_addr.c_str());
+					exit_status = EXIT_FAILURE;
+					goto dpdk_destroy;
+				}
+				remotes_to_connect = app_config.net_config.remote_nics;
+			}
+
+			while (!force_quit) {
+				psp_svc.try_connect(remotes_to_connect, local_vf_addr);
+				sleep(1);
+
+				if (app_config.print_stats) {
+					psp_svc.show_flow_counts();
+				}
+			}
+
+			DOCA_LOG_INFO("Shutting down");
+
+			server_instance->Shutdown();
+			server_instance.reset();
+
+			force_quit = true;
+			psp_svc.kill_lcores();
 		}
-
-		DOCA_LOG_INFO("Shutting down");
-
-		server_instance->Shutdown();
-		server_instance.reset();
-
-		psp_svc.kill_lcores();
 	}
+	doca_flow_destroy();
 
+dpdk_cleanup:
 	// flow cleanup
 	dpdk_queues_and_ports_fini(&app_config.dpdk_config);
-
+dev_rep_close:
+        doca_dev_rep_close(pf_dev.vf_dev_rep);
+        doca_dev_close(pf_dev.dev);
 dpdk_destroy:
 	dpdk_fini();
 	doca_argp_destroy();
