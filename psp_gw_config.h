@@ -94,6 +94,10 @@ struct psp_gw_nic_desc_t {
 
 	rte_ether_addr nexthop_mac;
 	rte_ether_addr vfmac;
+	struct doca_dev *pf_dev;
+	struct doca_dev_rep *vf_dev_rep;
+	uint16_t pf_port_id;
+	uint16_t vf_port_id;
 };
 
 /**
@@ -134,6 +138,10 @@ struct psp_gw_app_config {
 
 	struct psp_gw_net_config net_config; //!< List of remote hosts supporting PSP connections
 
+	std::vector<struct doca_dev *> pf_dev;         /* list of Host PF device */
+	std::map<std::string, struct doca_dev *> pci_to_doca_dev;
+	std::vector<struct doca_dev_rep *> vf_dev_rep; /* list of VF representor device */
+	std::map<std::string, struct doca_dev_rep *> vf_ifname_to_dev_rep;
 	/**
 	 * The rate of sampling user packets is controlled by a uint16_t mask.
 	 * This parameter determines how many bits of the mask should be set,
@@ -164,6 +172,7 @@ struct psp_gw_app_config {
 	bool print_stats;		//!< Print session and pipeline statistics to the console
 	uint16_t print_perf_flags;	//!< Print performance information to the console
 	enum doca_flow_l3_type outer;	//!< Indicate outer tunnel IP type
+	bool multithreaded;             //!<Parallel initialization when enabled
 };
 
 #endif // _PSP_GW_CONFIG_H_

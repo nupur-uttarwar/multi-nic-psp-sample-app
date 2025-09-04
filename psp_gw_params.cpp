@@ -34,6 +34,7 @@
 #include <doca_argp.h>
 #include <doca_dev.h>
 #include <doca_log.h>
+#include <doca_dpdk.h>
 
 #include <psp_gw_config.h>
 #include <psp_gw_params.h>
@@ -82,6 +83,61 @@ static doca_error_t handle_core_mask_param(void *param, void *config)
 }
 
 /**
+ * @brief Configures the device representors parameter
+ *
+ * @param [in]: the device representors string
+ * @config [in/out]: A void pointer to the application config struct
+ * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+ */
+static doca_error_t handle_repr_param(void *param, void *config)
+{
+        auto *app_config = (struct psp_gw_app_config *)config;
+        struct doca_argp_device_rep_ctx *dev_rep_ctx = (struct doca_argp_device_rep_ctx *)param;
+
+        if (dev_rep_ctx->dev_ctx.devargs != NULL) {
+                DOCA_LOG_WARN(
+                        "Passed representor device args are not needed, and will be overriden by the application");
+                /* Fallthrough */
+        }
+
+
+        app_config->vf_dev_rep.push_back(dev_rep_ctx->dev_rep);
+
+        char iface_name[DOCA_DEVINFO_IFACE_NAME_SIZE] = {0};
+        doca_devinfo_rep_get_iface_name(doca_dev_rep_as_devinfo(dev_rep_ctx->dev_rep), iface_name, sizeof(iface_name));
+
+        std::string s(iface_name);
+        app_config->vf_ifname_to_dev_rep[s] = dev_rep_ctx->dev_rep;
+        return DOCA_SUCCESS;
+}
+
+/**
+ * @brief Configures the device identifier
+ *
+ * @param [in]: the device identifier
+ * @config [in/out]: A void pointer to the application config struct
+ * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+ */
+static doca_error_t handle_device_param(void *param, void *config)
+{
+        auto *app_config = (struct psp_gw_app_config *)config;
+        struct doca_argp_device_ctx *dev = (struct doca_argp_device_ctx *)param;
+
+        if (dev->devargs != NULL) {
+                DOCA_LOG_WARN("Passed device args are not needed, and will be overriden by the application");
+                /* Fallthrough */
+        }
+
+        app_config->pf_dev.push_back(dev->dev);
+        char pci_addr_identifier[DOCA_DEVINFO_PCI_ADDR_SIZE]{0};
+        doca_devinfo_get_pci_addr_str(doca_dev_as_devinfo(dev->dev), pci_addr_identifier);
+        // Map pci to doca dev
+        app_config->pci_to_doca_dev[pci_addr_identifier] = dev->dev;
+
+        return DOCA_SUCCESS;
+}
+
+/*
  * @brief Configures the next-hop dst-mac to apply on encap
  *
  * @param [in]: the dst mac addr
@@ -671,6 +727,8 @@ static doca_error_t parse_repr(json_object *json_obj_remote_addr,
 		return result;
 	}
 
+	host->vf_dev_rep = app_config->vf_ifname_to_dev_rep[host->repr];
+
 	return DOCA_SUCCESS;
 }
 
@@ -686,6 +744,7 @@ static doca_error_t parse_pci(json_object *json_obj_remote_addr,
 		DOCA_LOG_ERR("Invalid pci, expected string");
 		return result;
 	}
+	host->pf_dev = app_config->pci_to_doca_dev[host->pci];
 
 	return DOCA_SUCCESS;
 }
@@ -826,11 +885,14 @@ static doca_error_t parse_json_hosts(json_object *json_obj_peers, psp_gw_app_con
 			return result;
 		}
 
-		// Separate local and remote NICs by hostname
-		if (nic.hostname == app_config->hostname) {
-			app_config->net_config.local_nics.push_back(nic);
-		} else {
-			app_config->net_config.remote_nics.push_back(nic);
+		//Push only if device is in use
+		if (nic.pf_dev) {
+			// Separate local and remote NICs by hostname
+			if (nic.hostname == app_config->hostname) {
+				app_config->net_config.local_nics.push_back(nic);
+			} else {
+				app_config->net_config.remote_nics.push_back(nic);
+			}
 		}
 	}
 
@@ -896,6 +958,25 @@ static doca_error_t psp_gw_register_params(void)
 	if (result != DOCA_SUCCESS)
 		return result;
 
+        result = psp_gw_register_single_param("r",
+                                              "repr",
+                                              "Device representor (required)",
+                                              handle_repr_param,
+                                              DOCA_ARGP_TYPE_DEVICE_REP,
+                                              true,
+                                              true);
+        if (result != DOCA_SUCCESS)
+                return result;
+
+        result = psp_gw_register_single_param("s",
+                                              "device",
+                                              "Device identifier (required)",
+                                              handle_device_param,
+                                              DOCA_ARGP_TYPE_DEVICE,
+                                              true,
+                                              true);
+        if (result != DOCA_SUCCESS)
+                return result;
 	result = psp_gw_register_single_param("n",
 					      "nexthop-dmac",
 					      "next-hop mac_dst addr of the encapped packets",

@@ -160,6 +160,7 @@ public:
 	doca_error_t init_devs();
 	doca_error_t init_flows();
 	doca_error_t init_doca_flow();
+	static int init_flows_thread(void* arg);
 
 	void launch_lcores(volatile bool *force_quit);
 	void lcore_callback();
