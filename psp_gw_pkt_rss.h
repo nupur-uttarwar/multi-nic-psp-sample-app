@@ -36,7 +36,7 @@ class PSP_GatewayImpl;
 struct lcore_params {
 	volatile bool *force_quit;   /*!< Indicates the application has been requested to quit */
 	psp_gw_app_config *config;   /*!< Contains configuration information */
-	uint16_t pf_port_id;	     /*!< The PF device to poll */
+	std::vector<uint16_t> pf_port_id_list; /*!< The PF devices to poll */
 	PSP_GatewayImpl *psp_svc;    /*!< The RPC service which manages tunnels */
 };
 

@@ -64,6 +64,7 @@ struct psp_pf_dev {
 	struct doca_flow_port *vf_port;
 	struct rte_ether_addr vf_repr_mac;
 	std::string vf_repr_mac_str;
+	struct doca_dev_rep *vf_dev_rep;
 
 	struct doca_flow_ip_addr local_pip; // Physical/Outer IP addr
 	std::string local_pip_str;
@@ -257,7 +258,7 @@ private:
 	 * @port [out]: the resulting port object
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	doca_error_t start_port(uint16_t port_id, doca_dev *port_dev, doca_flow_port **port);
+	doca_error_t start_port(uint16_t port_id, doca_dev *port_dev, doca_dev_rep *port_rep, doca_flow_port **port);
 
 	/**
 	 * @brief handles the binding of the shared resources to ports
@@ -284,6 +285,7 @@ private:
 				      doca_flow_pipe *pipe,
 				      doca_flow_port *port,
 				      const doca_flow_match *match,
+				      uint8_t action_idx,
 				      const doca_flow_actions *actions,
 				      const doca_flow_monitor *mon,
 				      const doca_flow_fwd *fwd,
@@ -422,6 +424,7 @@ private:
 	doca_error_t update_single_entry(uint16_t pipe_queue,
 						doca_flow_pipe *pipe,
 						const doca_flow_match *match,
+						uint8_t action_idx,
 						const doca_flow_actions *actions,
 						const doca_flow_monitor *mon,
 						const doca_flow_fwd *fwd,
@@ -481,8 +484,10 @@ private:
 	struct doca_flow_pipe *empty_pipe_not_sampled{};
 
 	// static pipe entries
-	struct doca_flow_pipe_entry *default_rss_entry_ingress{};
-	struct doca_flow_pipe_entry *default_rss_entry_egress{};
+	struct doca_flow_pipe_entry *ipv4_rss_entry_ingress{};
+	struct doca_flow_pipe_entry *ipv6_rss_entry_ingress{};
+	struct doca_flow_pipe_entry *ipv4_rss_entry_egress{};
+	struct doca_flow_pipe_entry *ipv6_rss_entry_egress{};
 	struct doca_flow_pipe_entry *default_decrypt_entry{};
 	struct doca_flow_pipe_entry *default_ingr_sampling_entry{};
 	struct doca_flow_pipe_entry *default_ingr_acl_entry{};
@@ -501,6 +506,11 @@ private:
 	uint32_t mirror_res_id;
 	uint32_t mirror_res_id_port;
 
+	// RSS queues
+	std::vector<uint16_t> rss_queues;
+	doca_flow_fwd fwd_changeable_rss{};
+	doca_flow_fwd fwd_ipv4_rss{};
+	doca_flow_fwd fwd_ipv6_rss{};
 	uint64_t prev_static_flow_count{UINT64_MAX};
 };
 
