@@ -27,6 +27,7 @@
 #include <chrono>
 #include <arpa/inet.h>
 #include <doca_log.h>
+#include <doca_dpdk.h>
 #include <doca_flow_crypto.h>
 #include <rte_lcore.h>
 
@@ -59,8 +60,8 @@ PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config)
 
 PSP_GatewayImpl::~PSP_GatewayImpl()
 {
-	for (auto &pair : psp_flows) {
-		delete pair.second;
+	for (auto rit = psp_flows.rbegin(); rit != psp_flows.rend(); ++rit) {
+		delete rit->second;
 	}
 }
 
@@ -362,14 +363,52 @@ doca_error_t PSP_GatewayImpl::init_devs(void) {
 	return result;
 }
 
+int PSP_GatewayImpl::init_flows_thread(void* arg) {
+    std::vector<FlowNicPair> *data = (std::vector<FlowNicPair>*)arg;
+
+    uint8_t lcore_id = rte_lcore_id();
+    doca_error_t result;
+    for (uint32_t port_id = lcore_id - 1; port_id < data->size(); port_id += rte_lcore_count() - 1) {
+        result = (*data)[port_id].second->init_flows();
+        if (result != DOCA_SUCCESS)
+        {
+            DOCA_LOG_ERR("Failed to init flows :Error %s", doca_error_get_descr(result));
+            //force_quit = true;
+            return 1;
+        }
+    }
+    return 0;
+}
 doca_error_t PSP_GatewayImpl::init_flows(void) {
 	doca_error_t result = DOCA_SUCCESS;
+	uint8_t nb_nics = psp_flows.size();
 
 	IF_SUCCESS(result, init_doca_flow());
-	for (auto &pair : psp_flows) {
-		IF_SUCCESS(result, pair.second->init_flows());
-	}
 
+	if (!config->multithreaded) {
+		for (auto &pair : psp_flows) {
+			IF_SUCCESS(result, pair.second->init_flows());
+		}
+	} else {
+                std::vector<FlowNicPair> thread_data = psp_flows;
+                uint8_t lcore_id = 0;
+
+                RTE_LCORE_FOREACH_WORKER(lcore_id) {
+                if (lcore_id == 0) {
+                        DOCA_LOG_DBG("Lcore 0 is reserved for main thread");
+                        continue;
+                }
+                if (lcore_id > nb_nics)
+                        break;
+                rte_eal_remote_launch(init_flows_thread, &thread_data, lcore_id);
+                }
+
+                RTE_LCORE_FOREACH_WORKER(lcore_id) {
+                        if (lcore_id > nb_nics)
+                                break;
+                        rte_eal_wait_lcore(lcore_id);
+                }
+        }
 	return result;
 }
 
@@ -415,12 +454,19 @@ void PSP_GatewayImpl::launch_lcores(volatile bool *force_quit) {
 	uint32_t lcore_id;
 
 	lcore_params_list.reserve(rte_lcore_count());
+	std::vector<uint16_t> pf_port_id_list;
+	uint8_t nb_nics = psp_flows.size();
+
+	for (uint32_t nic_idx=0; nic_idx < nb_nics; nic_idx ++) {
+		doca_dpdk_get_first_port_id(config->net_config.local_nics[nic_idx].pf_dev, &config->net_config.local_nics[nic_idx].pf_port_id);
+		pf_port_id_list.push_back(config->net_config.local_nics[nic_idx].pf_port_id);
+	}
 	RTE_LCORE_FOREACH_WORKER(lcore_id)
 	{
 		struct lcore_params lcore_params = {
 			force_quit,
 			config,
-			0, // pf port id
+			pf_port_id_list,
 			this,
 		};
 
