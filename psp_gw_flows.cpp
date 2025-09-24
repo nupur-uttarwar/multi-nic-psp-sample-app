@@ -539,12 +539,13 @@ doca_error_t PSP_GatewayFlows::bind_shared_resources(void)
 doca_error_t PSP_GatewayFlows::update_single_entry(uint16_t pipe_queue,
 						doca_flow_pipe *pipe,
 						const doca_flow_match *match,
+						uint8_t action_idx,
 						const doca_flow_actions *actions,
 						const doca_flow_monitor *mon,
 						const doca_flow_fwd *fwd,
 						doca_flow_pipe_entry *entry)
 {
-	doca_error_t result = doca_flow_pipe_update_entry(0, pipe, actions, mon, fwd, DOCA_FLOW_NO_WAIT, entry);
+	doca_error_t result = doca_flow_pipe_update_entry(0, pipe, action_idx, actions, mon, fwd, DOCA_FLOW_NO_WAIT, entry);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to update encrypt_encap pipe entry: %s", doca_error_get_descr(result));
 		return result;
@@ -563,6 +564,7 @@ doca_error_t PSP_GatewayFlows::add_single_entry(uint16_t pipe_queue,
 						doca_flow_pipe *pipe,
 						doca_flow_port *port,
 						const doca_flow_match *match,
+						uint8_t action_idx,
 						const doca_flow_actions *actions,
 						const doca_flow_monitor *mon,
 						const doca_flow_fwd *fwd,
@@ -575,7 +577,7 @@ doca_error_t PSP_GatewayFlows::add_single_entry(uint16_t pipe_queue,
 	status.entries_in_queue = num_of_entries;
 
 	doca_error_t result =
-		doca_flow_pipe_add_entry(pipe_queue, pipe, match, actions, mon, fwd, flags, &status, entry);
+		doca_flow_pipe_add_entry(pipe_queue, pipe, match, action_idx, actions, mon, fwd, flags, &status, entry);
 
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to add entry: %s", doca_error_get_descr(result));
@@ -626,6 +628,7 @@ doca_error_t PSP_GatewayFlows::rss_pipe_create(bool ingress)
                                     ingress ? rss_pipe_ingress : rss_pipe_egress,
                                     pf_dev.pf_port,
                                     &match,
+				    0,
                                     nullptr,
                                     nullptr,
                                     &fwd_ipv4_rss,
@@ -637,6 +640,7 @@ doca_error_t PSP_GatewayFlows::rss_pipe_create(bool ingress)
                                     ingress ? rss_pipe_ingress : rss_pipe_egress,
                                     pf_dev.pf_port,
                                     &match,
+				    0,
                                     nullptr,
                                     nullptr,
                                     &fwd_ipv6_rss,
@@ -683,6 +687,7 @@ doca_error_t PSP_GatewayFlows::syndrome_stats_pipe_create(void)
 					    syndrome_stats_pipe,
 					    pf_dev.pf_port,
 					    &syndrome_match,
+					    0,
 					    nullptr,
 					    &monitor_count,
 					    nullptr,
@@ -753,6 +758,7 @@ doca_error_t PSP_GatewayFlows::ingress_acl_pipe_create(void)
 					    ingress_acl_pipe,
 					    pf_dev.pf_port,
 					    &match_no_syndrome,
+					    0,
 					    &actions,
 					    nullptr,
 					    nullptr,
@@ -813,6 +819,7 @@ doca_error_t PSP_GatewayFlows::ingress_sampling_pipe_create(void)
 				    ingress_sampling_pipe,
 				    pf_dev.pf_port,
 				    nullptr,
+				    0,
 				    nullptr,
 				    nullptr,
 				    nullptr,
@@ -871,6 +878,7 @@ doca_error_t PSP_GatewayFlows::ingress_decrypt_pipe_create(void)
 				    ingress_decrypt_pipe,
 				    pf_dev.pf_port,
 				    &match_uplink,
+				    0,
 				    &actions,
 				    nullptr,
 				    nullptr,
@@ -902,6 +910,7 @@ doca_error_t PSP_GatewayFlows::empty_pipe_create_not_sampled(void)
 				    empty_pipe_not_sampled,
 				    pf_dev.pf_port,
 				    nullptr,
+				    0,
 				    nullptr,
 				    nullptr,
 				    nullptr,
@@ -974,6 +983,7 @@ doca_error_t PSP_GatewayFlows::egress_sampling_pipe_create(void)
 				    egress_sampling_pipe,
 				    pf_dev.pf_port,
 				    nullptr,
+				    0,
 				    nullptr,
 				    nullptr,
 				    nullptr,
@@ -1082,7 +1092,7 @@ doca_error_t PSP_GatewayFlows::empty_pipe_create(doca_flow_pipe *next_pipe)
 
 	IF_SUCCESS(
 		result,
-		add_single_entry(0, empty_pipe, pf_dev.pf_port, nullptr, nullptr, nullptr, nullptr, &empty_pipe_entry));
+		add_single_entry(0, empty_pipe, pf_dev.pf_port, nullptr, 0, nullptr, nullptr, nullptr, &empty_pipe_entry));
 
 	if (pipe_cfg) {
 		doca_flow_pipe_cfg_destroy(pipe_cfg);
@@ -1382,6 +1392,7 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
 	doca_error_t result = DOCA_SUCCESS;
+	uint8_t action_idx = 0;
 
 	bool ipv6_pip = session.remote_pip.find(":") != std::string::npos;
 	// If we receive a non-NULL entry, instead of creating a new entry, we just update the old one in-place
@@ -1414,10 +1425,10 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
 
 	if (ipv6_pip) {
 		encap_actions.crypto_encap.data_size = sizeof(eth_ipv6_psp_tunnel_hdr);
-		encap_actions.action_idx = 0;
+		action_idx = 0;
 	} else {
 		encap_actions.crypto_encap.data_size = sizeof(eth_ipv4_psp_tunnel_hdr);
-		encap_actions.action_idx = 1;
+		action_idx = 1;
 	}
 
 	if (!app_config->net_config.vc_enabled) {
@@ -1436,6 +1447,7 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
 		result = update_single_entry(0,
 						egress_acl_pipe,
 						&encap_encrypt_match,
+						action_idx,
 						&encap_actions,
 						nullptr,
 						nullptr,
@@ -1446,6 +1458,7 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
 					egress_acl_pipe,
 					pf_dev.pf_port,
 					&encap_encrypt_match,
+					action_idx,
 					&encap_actions,
 					nullptr,
 					nullptr,
@@ -1483,6 +1496,7 @@ doca_error_t PSP_GatewayFlows::add_ingress_acl_entry(const psp_session_desc_t &s
 				    ingress_acl_pipe,
 				    pf_dev.pf_port,
 				    &match,
+				    0,
 				    nullptr,
 				    nullptr,
 				    nullptr,

@@ -417,14 +417,6 @@ doca_error_t PSP_GatewayImpl::init_doca_flow(void)
 	doca_error_t result = DOCA_SUCCESS;
 	uint16_t nb_queues = config->dpdk_config.port_config.nb_queues;
 
-	uint16_t rss_queues[nb_queues];
-	for (int i = 0; i < nb_queues; i++)
-		rss_queues[i] = i;
-
-	struct doca_flow_resource_rss_cfg rss_config = {};
-	rss_config.nr_queues = nb_queues;
-	rss_config.queues_array = rss_queues;
-
 	size_t nb_nics = psp_flows.size();
 
 	/* init doca flow with crypto shared resources */
@@ -434,7 +426,6 @@ doca_error_t PSP_GatewayImpl::init_doca_flow(void)
 	IF_SUCCESS(result, doca_flow_cfg_set_nr_counters(flow_cfg, nb_nics * config->max_tunnels * NUM_OF_PSP_SYNDROMES + 10));
 	IF_SUCCESS(result, doca_flow_cfg_set_mode_args(flow_cfg, "switch,hws,isolated,expert"));
 	IF_SUCCESS(result, doca_flow_cfg_set_cb_entry_process(flow_cfg, PSP_GatewayImpl::check_for_valid_entry));
-	IF_SUCCESS(result, doca_flow_cfg_set_default_rss(flow_cfg, &rss_config));
 	IF_SUCCESS(result,
 		   doca_flow_cfg_set_nr_shared_resource(flow_cfg,
 							config->crypto_ids_per_nic * nb_nics,
