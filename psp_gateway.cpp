@@ -107,6 +107,7 @@ int main(int argc, char **argv)
 	app_config.log2_sample_rate = 0;
 	app_config.ingress_sample_meta_indicator = 0x65656565; // arbitrary pkt_meta flag value
 	app_config.egress_sample_meta_indicator = 0x43434343;
+	app_config.return_to_vf_indicator = 0x78787878;
 	app_config.show_sampled_packets = true;
 	app_config.show_rss_rx_packets = false;
 	app_config.show_rss_durations = false;

@@ -67,6 +67,7 @@ PSP_GatewayImpl::~PSP_GatewayImpl()
 
 doca_error_t PSP_GatewayImpl::request_tunnels_to_host(const std::vector<psp_session_desc_t> &session_descs)
 {
+	DOCA_LOG_ERR("Inside request_tunnels_to_host");
 	std::vector<doca_error_t> results;
 
 	if (session_descs.size() == 0) {
@@ -80,6 +81,7 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(const std::vector<psp_sess
 	}
 
 	std::vector<spi_key_t> ingress_spi_keys;
+	DOCA_LOG_ERR("Calling create_ingress_paths - add_ingress_acl_entry");
 	results = nic->create_ingress_paths(session_descs, ingress_spi_keys);
 	if (check_any_failed(results)) {
 		DOCA_LOG_ERR("Failed to create new ingress paths");
@@ -124,11 +126,12 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(const std::vector<psp_sess
 		}
 	}
 
+#if 0
 	results = nic->expire_ingress_paths(session_descs, remote_updated);
 	if (check_any_failed(results)) {
 		DOCA_LOG_WARN("Failed to expire old ingress paths");
 	}
-
+#endif
 	return DOCA_SUCCESS;
 }
 
@@ -155,6 +158,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 	session_desc.remote_pip = remote_nic->pip;
 
 	std::vector<psp_session_desc_t> session_descs = {session_desc};
+	DOCA_LOG_ERR("From handle_miss_packet - calling request_tunnels_to_host");
 	doca_error_t result = request_tunnels_to_host(session_descs);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to request tunnel to %s", session_desc.remote_vip.c_str());
@@ -174,6 +178,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 		return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "No tunnels requested");
 	}
 
+	DOCA_LOG_ERR("Inside RequestMultipleTunnelParams");
 	std::vector<psp_session_desc_t> relevant_sessions(request->tunnels_size());
 	std::vector<spi_keyptr_t> egress_spi_keys(request->tunnels_size());
 	for (int i = 0; i < request->tunnels_size(); i++) {
@@ -215,6 +220,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 			response->add_tunnels_params());
 	}
 
+	DOCA_LOG_ERR("Inside RequestMultipleTunnelParams - stage 2");
 	std::vector<bool> remote_updated(relevant_sessions.size(), true);
 	for (doca_error_t result : results) {
 		remote_updated.push_back(result == DOCA_SUCCESS);
@@ -423,19 +429,23 @@ doca_error_t PSP_GatewayImpl::init_doca_flow(void)
 	struct doca_flow_cfg *flow_cfg;
 	IF_SUCCESS(result, doca_flow_cfg_create(&flow_cfg));
 	IF_SUCCESS(result, doca_flow_cfg_set_pipe_queues(flow_cfg, nb_queues));
-	IF_SUCCESS(result, doca_flow_cfg_set_nr_counters(flow_cfg, nb_nics * config->max_tunnels * NUM_OF_PSP_SYNDROMES + 10));
+	//IF_SUCCESS(result, doca_flow_cfg_set_nr_counters(flow_cfg, nb_nics * config->max_tunnels * NUM_OF_PSP_SYNDROMES + 10));
 	IF_SUCCESS(result, doca_flow_cfg_set_mode_args(flow_cfg, "switch,hws,isolated,expert"));
 	IF_SUCCESS(result, doca_flow_cfg_set_cb_entry_process(flow_cfg, PSP_GatewayImpl::check_for_valid_entry));
+	IF_SUCCESS(result, doca_flow_cfg_set_resource_mode(flow_cfg, DOCA_FLOW_RESOURCE_MODE_PORT));
+#if 0
 	IF_SUCCESS(result,
 		   doca_flow_cfg_set_nr_shared_resource(flow_cfg,
 							config->crypto_ids_per_nic * nb_nics,
 							DOCA_FLOW_SHARED_RESOURCE_PSP));
-	IF_SUCCESS(result, doca_flow_cfg_set_nr_shared_resource(flow_cfg, 4 * nb_nics, DOCA_FLOW_SHARED_RESOURCE_MIRROR));
-	IF_SUCCESS(result, doca_flow_init(flow_cfg));
 
 	if (result == DOCA_SUCCESS)
 		DOCA_LOG_INFO("Initialized DOCA Flow for a max of %d tunnels", config->max_tunnels);
+#endif
+        IF_SUCCESS(result, doca_flow_init(flow_cfg));
 
+        if (result == DOCA_SUCCESS)
+                DOCA_LOG_INFO("Initialized DOCA Flow for a max of %d tunnels", config->max_tunnels);
 	if (flow_cfg)
 		doca_flow_cfg_destroy(flow_cfg);
 	return result;

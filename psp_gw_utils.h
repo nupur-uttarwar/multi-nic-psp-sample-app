@@ -34,6 +34,15 @@
 #include <algorithm>
 #include "psp_gw_config.h"
 
+/* set IPv6 address in array */
+#define SET_IP6_ADDR(addr, a, b, c, d) \
+        do { \
+                addr[0] = a; \
+                addr[1] = b; \
+                addr[2] = c; \
+                addr[3] = d; \
+        } while (0)
+
 #define IF_SUCCESS(result, expr) \
 	if (result == DOCA_SUCCESS) { \
 		result = expr; \

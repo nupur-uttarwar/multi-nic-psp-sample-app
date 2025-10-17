@@ -75,7 +75,7 @@ static void handle_packet(struct lcore_params *params, uint16_t port_id, uint16_
 		struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(packet, struct rte_ether_hdr *);
 		uint16_t ether_type = htons(eth_hdr->ether_type);
 		if (ether_type == DOCA_FLOW_ETHER_TYPE_ARP) {
-			handle_arp(params->config->dpdk_config.mbuf_pool, port_id, queue_id, packet, 0);
+			handle_arp(params->config->dpdk_config.mbuf_pool, port_id, queue_id, packet, params->config->return_to_vf_indicator);
 		} else {
 			doca_error_t result = params->psp_svc->handle_miss_packet(packet);
 			if (result == DOCA_SUCCESS)
