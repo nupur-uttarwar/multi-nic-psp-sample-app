@@ -44,7 +44,6 @@ DOCA_LOG_REGISTER(PSP_GATEWAY);
 
 static const uint32_t DEFAULT_TIMEOUT_US = 10000; /* default timeout for processing entries */
 static const uint32_t PSP_ICV_SIZE = 16;
-
 /* Customer requirement: 20K PSP tunnels
  * Encap entries: 20K
  * Decap entries: 2*20K as during  PSP key rotation, we temporarily keep ingress sessions open for both the old and new keys
@@ -152,32 +151,46 @@ doca_error_t PSP_GatewayFlows::init_dev(void)
                                                 "vport_match=1,"
                                                 "repr_matching_en=0");
 
-        nic_info.pf_dev = pf_dev.dev = app_config->pf_dev[app_config->next_port_id];
-        nic_info.vf_dev_rep = pf_dev.vf_dev_rep = app_config->vf_dev_rep[app_config->next_port_id];
+        nic_info.pf_dev = pf_dev.dev = app_config->pci_to_doca_dev[nic_info.pci];
+
+        // Find the matching VF representor index
+        uint16_t dev_index = -1;
+        for (size_t i = 0; i < app_config->pf_dev.size(); i++) {
+              if (app_config->pf_dev[i] == pf_dev.dev) {
+                   dev_index = i;
+                   break;
+              }
+        }
+        if (dev_index < 0) {
+              DOCA_LOG_ERR("Failed to find device index for PCI %s", nic_info.pci.c_str());
+              return DOCA_ERROR_NOT_FOUND;
+        }
+        nic_info.vf_dev_rep = pf_dev.vf_dev_rep = app_config->vf_dev_rep[dev_index];
 
         //New API in 3.1
-	uint64_t freq = rte_get_tsc_hz();
-	uint64_t start = rte_rdtsc_precise();
+        uint64_t freq = rte_get_tsc_hz();
+        uint64_t start = rte_rdtsc_precise();
         result = doca_dpdk_port_probe_with_representors(pf_dev.dev,
                         dev_probe_str.c_str(),
                         &nic_info.vf_dev_rep,
                         1);
-	uint64_t end = rte_rdtsc_precise();
-	DOCA_LOG_INFO("doca_dpdk_port_probe_with_representors for port id %d took %0.3lf us", app_config->next_port_id, get_us(start, end, freq));
+        uint64_t end = rte_rdtsc_precise();
         if (result != DOCA_SUCCESS) {
                 DOCA_LOG_ERR("Failed to probe dpdk port for secured port: %s", doca_error_get_descr(result));
                 return result;
         }
 
-        app_config->next_port_id++;
         uint16_t dpdk_port_id;
         doca_dpdk_get_first_port_id(pf_dev.dev, &dpdk_port_id);
 
+        DOCA_LOG_INFO("doca_dpdk_port_probe_with_representors for port %d took %0.3lf us", dpdk_port_id, get_us(start, end, freq));
         pf_dev.pf_port_id = dpdk_port_id;
         pf_dev.vf_port_id = pf_dev.pf_port_id + 1;
         nic_info.pf_port_id = pf_dev.pf_port_id;
         nic_info.vf_port_id = pf_dev.vf_port_id;
 
+        DOCA_LOG_INFO("=== NIC initialized: PCI=%s, pf_port_id=%d, vf_port_id=%d", 
+                     nic_info.pci.c_str(), nic_info.pf_port_id, nic_info.vf_port_id);
         rte_eth_macaddr_get(pf_dev.pf_port_id, &pf_dev.pf_mac);
         pf_dev.pf_mac_str = mac_to_string(pf_dev.pf_mac);
 
@@ -185,31 +198,29 @@ doca_error_t PSP_GatewayFlows::init_dev(void)
         pf_dev.vf_repr_mac_str = mac_to_string(pf_dev.vf_repr_mac);
         pf_dev.vf_dev_rep = nic_info.vf_dev_rep;
 
-	if (app_config->outer == DOCA_FLOW_L3_TYPE_IP4) {
-		pf_dev.local_pip.type = DOCA_FLOW_L3_TYPE_IP4;
-		result = doca_devinfo_get_ipv4_addr(doca_dev_as_devinfo(pf_dev.dev),
-						    (uint8_t *)&pf_dev.local_pip.ipv4_addr,
-						    DOCA_DEVINFO_IPV4_ADDR_SIZE);
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to find IPv4 addr for PF: %s", doca_error_get_descr(result));
-			return result;
-		}
-		pf_dev.local_pip_str = ipv4_to_string(pf_dev.local_pip.ipv4_addr);
-	} else {
-		pf_dev.local_pip.type = DOCA_FLOW_L3_TYPE_IP6;
-		result = doca_devinfo_get_ipv6_addr(doca_dev_as_devinfo(pf_dev.dev),
-						    (uint8_t *)pf_dev.local_pip.ipv6_addr,
-						    DOCA_DEVINFO_IPV6_ADDR_SIZE);
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to find IPv6 addr for PF: %s", doca_error_get_descr(result));
-			return DOCA_SUCCESS;
-			//return result;
-		}
-		pf_dev.local_pip_str = ipv6_to_string(pf_dev.local_pip.ipv6_addr);
-	}
+        if (app_config->outer == DOCA_FLOW_L3_TYPE_IP4) {
+                pf_dev.local_pip.type = DOCA_FLOW_L3_TYPE_IP4;
+                result = doca_devinfo_get_ipv4_addr(doca_dev_as_devinfo(pf_dev.dev),
+                                                    (uint8_t *)&pf_dev.local_pip.ipv4_addr,DOCA_DEVINFO_IPV4_ADDR_SIZE);
+                if (result != DOCA_SUCCESS) {
+                        DOCA_LOG_ERR("Failed to find IPv4 addr for PF: %s", doca_error_get_descr(result));
+                        return result;
+                }
+                pf_dev.local_pip_str = ipv4_to_string(pf_dev.local_pip.ipv4_addr);
+         } else {
+                pf_dev.local_pip.type = DOCA_FLOW_L3_TYPE_IP6;
+                result = doca_devinfo_get_ipv6_addr(doca_dev_as_devinfo(pf_dev.dev),
+                                                    (uint8_t *)pf_dev.local_pip.ipv6_addr,
+                                                    DOCA_DEVINFO_IPV6_ADDR_SIZE);
+                if (result != DOCA_SUCCESS) {
+                        DOCA_LOG_ERR("Failed to find IPv6 addr for PF: %s", doca_error_get_descr(result));
+                        return result;
+                }
+                pf_dev.local_pip_str = ipv6_to_string(pf_dev.local_pip.ipv6_addr);
+          }
 
-	DOCA_LOG_INFO("Probed PF %s, VF %s on PCI %s", pf_dev.pf_mac_str.c_str(), pf_dev.vf_repr_mac_str.c_str(), nic_info.pci.c_str());
-	return result;
+          DOCA_LOG_INFO("Probed PF %s, VF %s on PCI %s", pf_dev.pf_mac_str.c_str(), pf_dev.vf_repr_mac_str.c_str(), nic_info.pci.c_str());
+          return result;
 }
 
 void PSP_GatewayFlows::init_status(psp_gw_app_config *app_config)
@@ -227,9 +238,6 @@ doca_error_t PSP_GatewayFlows::init_flows(void)
 	IF_SUCCESS(result, bind_shared_resources());
 	init_status(app_config);
 	IF_SUCCESS(result, create_pipes());
-
-	//set_pending_op_state(DOCA_FLOW_PORT_OPERATION_STATE_STANDBY);
-	//IF_SUCCESS(result, apply_pending_op_state());
 
 	return result;
 }
@@ -365,7 +373,6 @@ doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session
 
 	new_session.crypto_id = next_crypto_id();
 	if (new_session.crypto_id == UINT32_MAX) {
-		DOCA_LOG_ERR("Failed to allocate crypto id");
 		result = DOCA_ERROR_NO_MEMORY;
 		goto cleanup;
 	}
@@ -376,14 +383,13 @@ doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session
 
 	result = doca_flow_port_shared_resource_set_cfg(pf_dev.pf_port,
 							DOCA_FLOW_SHARED_RESOURCE_PSP,
-							session.crypto_id,
+							new_session.crypto_id,
 							&res_cfg);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to configure crypto_id %d: %s", new_session.crypto_id, doca_error_get_descr(result));
 		goto cleanup;
 	}
 
-	DOCA_LOG_ERR("In set_egress_path - Stage 1 complete");
 	// Note: If there is no current entry, we will create a new one. If there is an
 	//       existing entry, we will update it with the new SPI and crypto id
 	result = config_encrypt_entry(session, spi_key.spi, new_session.crypto_id, &new_session.encap_encrypt_entry);
@@ -396,10 +402,11 @@ doca_error_t PSP_GatewayFlows::set_egress_path(const psp_session_desc_t &session
 	egress_sessions[session] = new_session;
 
 cleanup:
+#if 0
 	if (update_existing_session) {
 		//release_crypto_id(result == DOCA_SUCCESS ? old_crypto_id : new_session.crypto_id);
 	}
-
+#endif
 	return result;
 }
 
@@ -411,7 +418,6 @@ std::vector<doca_error_t> PSP_GatewayFlows::set_egress_paths(
 
 	std::vector<doca_error_t> results(sessions.size());
 	for(size_t i = 0; i < sessions.size(); ++i) {
-
 		results[i] = set_egress_path(sessions[i], spi_keys[i]);
 	}
 	return results;
@@ -510,14 +516,12 @@ doca_error_t PSP_GatewayFlows::add_single_flooding_entry(uint16_t pipe_queue,
 		DOCA_LOG_ERR("Failed to process entry: %s", doca_error_get_descr(result));
 		return result;
 	}
-#if 0
 	if (app_config->status[pipe_queue].nb_processed != num_of_entries || app_config->status[pipe_queue].failure) {
 		DOCA_LOG_ERR("Failed to process entry; nb_processed = %d, failure = %d",
 			     app_config->status[pipe_queue].nb_processed,
 			     app_config->status[pipe_queue].failure);
 		return DOCA_ERROR_BAD_STATE;
 	}
-#endif
 	return result;
 }
 
@@ -562,8 +566,7 @@ doca_error_t PSP_GatewayFlows::create_pipes(void)
 	IF_SUCCESS(result, fwd_to_wire_pipe_create());
 	IF_SUCCESS(result, syndrome_stats_pipe_create());
 	IF_SUCCESS(result, ingress_acl_pipe_create());
-	IF_SUCCESS(result, match_ingress_acl_pipe_create(true)); 
-	IF_SUCCESS(result, match_ingress_acl_pipe_create(false));
+	IF_SUCCESS(result, match_ingress_acl_pipe_create()); 
 	IF_SUCCESS(result, ingress_src_ip6_pipe_create());
         if (sampling_enabled()) {
                 IF_SUCCESS(result, empty_pipe_create_not_sampled());
@@ -581,7 +584,6 @@ doca_error_t PSP_GatewayFlows::create_pipes(void)
 	IF_SUCCESS(result, match_ingress_decrypt_pipe_create());
         IF_SUCCESS(result, egress_acl_pipe_create());
 	IF_SUCCESS(result, match_egress_acl_pipe_create(true)); // Create IPv4 match pipe
-	IF_SUCCESS(result, match_egress_acl_pipe_create(false)); // Create IPv6 match pipe
 	IF_SUCCESS(result, egress_dst_ip6_pipe_create());
         IF_SUCCESS(result, empty_pipe_create()); //(match_egress_acl_ipv6_pipe));
 	IF_SUCCESS(result, ingress_root_pipe_create())
@@ -601,7 +603,6 @@ doca_error_t PSP_GatewayFlows::start_port(uint16_t port_id, doca_dev *port_dev,
 	doca_error_t result = DOCA_SUCCESS;
 
 	IF_SUCCESS(result, doca_flow_port_cfg_create(&port_cfg));
-	DOCA_LOG_INFO("doca_flow_port_cfg_create successful");
 	if (app_cfg) {
 		IF_SUCCESS(result,
 			   doca_flow_port_cfg_set_nr_resources(port_cfg,
@@ -722,17 +723,15 @@ doca_error_t PSP_GatewayFlows::add_single_entry(uint16_t pipe_queue,
 		return result;
 	}
 
-#if 0
 	if (status.nb_processed != num_of_entries || status.failure) {
 		DOCA_LOG_ERR("Failed to process entry; nb_processed = %d, failure = %d",
 			     status.nb_processed,
 			     status.failure);
 		return DOCA_ERROR_BAD_STATE;
 	}
-#endif
 	return result;
 }
-//checked - it does differ but should be okay - recheck TODO
+
 doca_error_t PSP_GatewayFlows::rss_pipe_create(bool ingress)
 {
         DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
@@ -785,7 +784,7 @@ doca_error_t PSP_GatewayFlows::rss_pipe_create(bool ingress)
 
         return result;
 }
-//checked
+
 doca_error_t PSP_GatewayFlows::syndrome_stats_pipe_create(void)
 {
 	doca_error_t result = DOCA_SUCCESS;
@@ -829,7 +828,7 @@ doca_error_t PSP_GatewayFlows::syndrome_stats_pipe_create(void)
 
 	return result;
 }
-//checked
+
 doca_error_t PSP_GatewayFlows::ingress_src_ip6_pipe_create(void)
 {
         DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
@@ -871,7 +870,6 @@ doca_error_t PSP_GatewayFlows::ingress_src_ip6_pipe_create(void)
         return result;
 }
 
-//checked - not sure what's the use of this pipe TODO why is the name same
 doca_error_t PSP_GatewayFlows::egress_dst_ip6_pipe_create(void)
 {
         DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
@@ -910,7 +908,7 @@ doca_error_t PSP_GatewayFlows::egress_dst_ip6_pipe_create(void)
 
         return result;
 }
-//checked
+
 doca_error_t PSP_GatewayFlows::ingress_acl_pipe_create(void)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
@@ -930,22 +928,21 @@ doca_error_t PSP_GatewayFlows::ingress_acl_pipe_create(void)
         crypto_actions_ipv6.crypto_encap.icv_size = PSP_ICV_SIZE;
 
 	// In tunnel mode, we need to decap the eth/ip/udp/psp headers and add ethernet header
-	// In transport mode, we only remove the udp/psp headers
-		crypto_actions_ipv4.crypto_encap.net_type = DOCA_FLOW_CRYPTO_HEADER_PSP_TUNNEL;
-		crypto_actions_ipv4.crypto_encap.data_size = sizeof(rte_ether_hdr);
+	crypto_actions_ipv4.crypto_encap.net_type = DOCA_FLOW_CRYPTO_HEADER_PSP_TUNNEL;
+	crypto_actions_ipv4.crypto_encap.data_size = sizeof(rte_ether_hdr);
 
-		rte_ether_hdr *eth_hdr_ipv4 = (rte_ether_hdr *)crypto_actions_ipv4.crypto_encap.encap_data;
-		eth_hdr_ipv4->ether_type = RTE_BE16(RTE_ETHER_TYPE_IPV4);
-		eth_hdr_ipv4->src_addr = pf_dev.pf_mac;
-		eth_hdr_ipv4->dst_addr = app_config->dcap_dmac;
+	rte_ether_hdr *eth_hdr_ipv4 = (rte_ether_hdr *)crypto_actions_ipv4.crypto_encap.encap_data;
+	eth_hdr_ipv4->ether_type = RTE_BE16(RTE_ETHER_TYPE_IPV4);
+	eth_hdr_ipv4->src_addr = pf_dev.pf_mac;
+	eth_hdr_ipv4->dst_addr = nic_info.vfmac;
 
-                crypto_actions_ipv6.crypto_encap.net_type = DOCA_FLOW_CRYPTO_HEADER_PSP_TUNNEL;
-                crypto_actions_ipv6.crypto_encap.data_size = sizeof(rte_ether_hdr);
+        crypto_actions_ipv6.crypto_encap.net_type = DOCA_FLOW_CRYPTO_HEADER_PSP_TUNNEL;
+        crypto_actions_ipv6.crypto_encap.data_size = sizeof(rte_ether_hdr);
 
-                rte_ether_hdr *eth_hdr_ipv6 = (rte_ether_hdr *)crypto_actions_ipv6.crypto_encap.encap_data;
-                eth_hdr_ipv6->ether_type = RTE_BE16(RTE_ETHER_TYPE_IPV6);
-                eth_hdr_ipv6->src_addr = pf_dev.pf_mac;
-                eth_hdr_ipv6->dst_addr = app_config->dcap_dmac;
+        rte_ether_hdr *eth_hdr_ipv6 = (rte_ether_hdr *)crypto_actions_ipv6.crypto_encap.encap_data;
+        eth_hdr_ipv6->ether_type = RTE_BE16(RTE_ETHER_TYPE_IPV6);
+        eth_hdr_ipv6->src_addr = pf_dev.pf_mac;
+        eth_hdr_ipv6->dst_addr = nic_info.vfmac;
 
 	// Create 2 ordered lists (sequences) - one for IPv4, one for IPv6
 	const int nb_ordered_lists = 2;
@@ -1016,8 +1013,8 @@ doca_error_t PSP_GatewayFlows::ingress_acl_pipe_create(void)
 
 	return result;
 }
-//checked
-doca_error_t PSP_GatewayFlows::match_ingress_acl_pipe_create(bool is_ipv4)
+
+doca_error_t PSP_GatewayFlows::match_ingress_acl_pipe_create()
 {
 	doca_error_t result = DOCA_SUCCESS;
 
@@ -1027,17 +1024,11 @@ doca_error_t PSP_GatewayFlows::match_ingress_acl_pipe_create(bool is_ipv4)
 	doca_flow_header_format *match_hdr = &match.inner;
 
 	if (!app_config->disable_ingress_acl) {
-		if (is_ipv4) {
-			match_hdr->l3_type = DOCA_FLOW_L3_TYPE_IP4;
-			match.tun.type = DOCA_FLOW_TUN_PSP;
-			match.tun.psp.spi = UINT32_MAX;
-			match_hdr->ip4.src_ip = UINT32_MAX;
-			match_hdr->ip4.dst_ip = UINT32_MAX;
-                } else {
-                        match_hdr->l3_type = DOCA_FLOW_L3_TYPE_IP6;
-                        match.meta.u32[2] = UINT32_MAX;
-                        SET_IP6_ADDR(match_hdr->ip6.dst_ip, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX);
-                }
+		match_hdr->l3_type = DOCA_FLOW_L3_TYPE_IP4;
+		match.tun.type = DOCA_FLOW_TUN_PSP;
+		match.tun.psp.spi = UINT32_MAX;
+		match_hdr->ip4.src_ip = UINT32_MAX;
+		match_hdr->ip4.dst_ip = UINT32_MAX;
 	}
 	doca_flow_fwd fwd_to_ordered_list = {};
 	fwd_to_ordered_list.type = DOCA_FLOW_FWD_ORDERED_LIST_PIPE;
@@ -1045,24 +1036,21 @@ doca_error_t PSP_GatewayFlows::match_ingress_acl_pipe_create(bool is_ipv4)
 	fwd_to_ordered_list.ordered_list_pipe.idx = UINT32_MAX;
 
 	doca_flow_pipe_cfg *pipe_cfg = NULL;
-	doca_flow_pipe **target_pipe = is_ipv4 ? &match_ingress_acl_ipv4_pipe : &match_ingress_acl_ipv6_pipe;
-	int nr_entries = app_config->disable_ingress_acl ? 1 : app_config->max_tunnels;
+	doca_flow_pipe **target_pipe = &match_ingress_acl_ipv4_pipe;
 
 	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev.pf_port));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &match, nullptr));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_domain(pipe_cfg, DOCA_FLOW_PIPE_DOMAIN_SECURE_INGRESS));
-	IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, nr_entries));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_monitor(pipe_cfg, &monitor_count));
 	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd_to_ordered_list, nullptr, target_pipe));
 
 	if (pipe_cfg) {
 		doca_flow_pipe_cfg_destroy(pipe_cfg);
 	}
-
 	if (app_config->disable_ingress_acl) {
 		doca_flow_match match_no_syndrome = {};
-		fwd_to_ordered_list.ordered_list_pipe.idx = is_ipv4 ? 0 : 1;// fwd to IPv4 sequence (idx 0)
-		doca_flow_pipe_entry **target_entry = is_ipv4 ? &default_ingr_acl_ipv4_match_entry : &default_ingr_acl_ipv6_match_entry;
+		fwd_to_ordered_list.ordered_list_pipe.idx = 0;
+		doca_flow_pipe_entry **target_entry = &default_ingr_acl_ipv4_match_entry;
 
 		IF_SUCCESS(result,
 			   add_single_entry(0,
@@ -1075,19 +1063,17 @@ doca_error_t PSP_GatewayFlows::match_ingress_acl_pipe_create(bool is_ipv4)
 					    &fwd_to_ordered_list,
 					    target_entry));
 	}
-
 	return result;
 }
-//checked
+
 doca_error_t PSP_GatewayFlows::ingress_inner_classifier_pipe_create(void)
 {
         DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
         doca_error_t result = DOCA_SUCCESS;
 
         doca_flow_match match = {};
-        match.parser_meta.psp_syndrome = UINT8_MAX;
-                match.tun.type = DOCA_FLOW_TUN_PSP;
-                match.tun.psp.nexthdr = -1;
+        match.tun.type = DOCA_FLOW_TUN_PSP;
+        match.tun.psp.nexthdr = NEXT_HEADER_IPV4;
 
         doca_flow_fwd fwd = {};
         fwd.type = DOCA_FLOW_FWD_PIPE;
@@ -1102,7 +1088,7 @@ doca_error_t PSP_GatewayFlows::ingress_inner_classifier_pipe_create(void)
         IF_SUCCESS(result, doca_flow_pipe_cfg_set_name(pipe_cfg, "INNER_IP_CLASSIFIER"));
         IF_SUCCESS(result, doca_flow_pipe_cfg_set_domain(pipe_cfg, DOCA_FLOW_PIPE_DOMAIN_SECURE_INGRESS));
         IF_SUCCESS(result, doca_flow_pipe_cfg_set_miss_counter(pipe_cfg, true));
-        IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, 2));
+        IF_SUCCESS(result, doca_flow_pipe_cfg_set_nr_entries(pipe_cfg, 1));
         IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &match, &match));
         IF_SUCCESS(result, doca_flow_pipe_cfg_set_monitor(pipe_cfg, &monitor_count));
         IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd, &fwd_miss, &ingress_inner_ip_classifier_pipe));
@@ -1111,22 +1097,6 @@ doca_error_t PSP_GatewayFlows::ingress_inner_classifier_pipe_create(void)
                 doca_flow_pipe_cfg_destroy(pipe_cfg);
         }
 
-        match.parser_meta.psp_syndrome = 0;
-                match.tun.psp.nexthdr = NEXT_HEADER_IPV6;
-
-        fwd.next_pipe = !app_config->disable_ingress_acl ? ingress_src_ip6_pipe : match_ingress_acl_ipv6_pipe;
-        IF_SUCCESS(result,
-                   add_single_entry(0,
-                                    ingress_inner_ip_classifier_pipe,
-                                    pf_dev.pf_port,
-                                    &match,
-                                    0,
-                                    nullptr,
-                                    nullptr,
-                                    &fwd,
-                                    &ingress_ipv6_clasify_entry));
-
-         match.tun.psp.nexthdr = NEXT_HEADER_IPV4;
         fwd.next_pipe = match_ingress_acl_ipv4_pipe;
         IF_SUCCESS(result,
                    add_single_entry(0,
@@ -1141,7 +1111,7 @@ doca_error_t PSP_GatewayFlows::ingress_inner_classifier_pipe_create(void)
 
         return result;
 }
-//checked
+
 doca_error_t PSP_GatewayFlows::ingress_sampling_pipe_create(void)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
@@ -1202,7 +1172,6 @@ doca_error_t PSP_GatewayFlows::ingress_sampling_pipe_create(void)
 	return result;
 }
 
-//checked
 doca_error_t PSP_GatewayFlows::ingress_decrypt_pipe_create(void)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
@@ -1260,7 +1229,7 @@ doca_error_t PSP_GatewayFlows::ingress_decrypt_pipe_create(void)
                                                  &default_decrypt_entry));
         return result;
 }
-//checked
+
 doca_error_t PSP_GatewayFlows::match_ingress_decrypt_pipe_create(void)
 {
         DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
@@ -1269,7 +1238,7 @@ doca_error_t PSP_GatewayFlows::match_ingress_decrypt_pipe_create(void)
 
         /* Add pipe to match psp packets from uplink and fwd all to ordered list for decryption */
         doca_flow_match match = {};
-        //match.parser_meta.port_id = UINT16_MAX; // TODO check
+        match.parser_meta.port_id = UINT16_MAX;
         match.parser_meta.outer_l4_type = DOCA_FLOW_L4_META_UDP;
         match.outer.l4_type_ext = DOCA_FLOW_L4_TYPE_EXT_UDP;
         match.outer.udp.l4_port.dst_port = RTE_BE16(DOCA_FLOW_PSP_DEFAULT_PORT);
@@ -1290,7 +1259,7 @@ doca_error_t PSP_GatewayFlows::match_ingress_decrypt_pipe_create(void)
         }
 
         doca_flow_match match_uplink = {};
-        //match_uplink.parser_meta.port_id = 0; // TODO check
+        match_uplink.parser_meta.port_id = pf_dev.pf_port_id;
 
         IF_SUCCESS(result,
                    add_single_entry(0,
@@ -1305,7 +1274,7 @@ doca_error_t PSP_GatewayFlows::match_ingress_decrypt_pipe_create(void)
 
         return result;
 }
-//checked -differs but should be ok - recheck TODO
+
 doca_error_t PSP_GatewayFlows::empty_pipe_create_not_sampled(void)
 {
 	doca_error_t result = DOCA_SUCCESS;
@@ -1410,7 +1379,7 @@ doca_error_t PSP_GatewayFlows::egress_sampling_pipe_create(void)
 
 	return result;
 }
-//checked
+
 doca_error_t PSP_GatewayFlows::egress_acl_pipe_create(void)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
@@ -1432,10 +1401,10 @@ doca_error_t PSP_GatewayFlows::egress_acl_pipe_create(void)
 	crypto_encap_ipv6 = crypto_actions;
 	crypto_encap_ipv4 = crypto_actions;
 
-		crypto_encap_ipv6.crypto_encap.net_type = crypto_encap_ipv4.crypto_encap.net_type =
+	crypto_encap_ipv6.crypto_encap.net_type = crypto_encap_ipv4.crypto_encap.net_type =
 			DOCA_FLOW_CRYPTO_HEADER_PSP_TUNNEL;
-		crypto_encap_ipv6.crypto_encap.data_size = sizeof(eth_ipv6_psp_tunnel_hdr);
-		crypto_encap_ipv4.crypto_encap.data_size = sizeof(eth_ipv4_psp_tunnel_hdr);
+	crypto_encap_ipv6.crypto_encap.data_size = sizeof(eth_ipv6_psp_tunnel_hdr);
+	crypto_encap_ipv4.crypto_encap.data_size = sizeof(eth_ipv4_psp_tunnel_hdr);
 	if (!app_config->net_config.vc_enabled) {
 		crypto_encap_ipv6.crypto_encap.data_size -= sizeof(uint64_t);
 		crypto_encap_ipv4.crypto_encap.data_size -= sizeof(uint64_t);
@@ -1484,7 +1453,6 @@ doca_error_t PSP_GatewayFlows::egress_acl_pipe_create(void)
 	doca_flow_fwd fwd_miss = {};
 	fwd_miss.type = DOCA_FLOW_FWD_PIPE;
 	fwd_miss.next_pipe = rss_pipe_egress;
-
 	doca_flow_pipe_cfg *pipe_cfg = NULL;
 	IF_SUCCESS(result, doca_flow_pipe_cfg_create(&pipe_cfg, pf_dev.pf_port));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_name(pipe_cfg, "EGR_ACL"));
@@ -1502,7 +1470,6 @@ doca_error_t PSP_GatewayFlows::egress_acl_pipe_create(void)
 	return result;
 }
 
-//checked
 doca_error_t PSP_GatewayFlows::match_egress_acl_pipe_create(bool is_ipv4)
 {
 	assert(egress_acl_pipe);
@@ -1538,6 +1505,7 @@ doca_error_t PSP_GatewayFlows::match_egress_acl_pipe_create(bool is_ipv4)
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_name(pipe_cfg, pipe_name));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_match(pipe_cfg, &match, nullptr));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_domain(pipe_cfg, DOCA_FLOW_PIPE_DOMAIN_SECURE_EGRESS));
+	IF_SUCCESS(result, doca_flow_pipe_cfg_set_miss_counter(pipe_cfg, true));
 	IF_SUCCESS(result, doca_flow_pipe_cfg_set_monitor(pipe_cfg, &monitor_count));
 	IF_SUCCESS(result, doca_flow_pipe_create(pipe_cfg, &fwd_to_ordered_list, &fwd_miss, target_pipe));
 
@@ -1623,7 +1591,6 @@ doca_error_t PSP_GatewayFlows::empty_pipe_create(void)
         return result;
 }
 
-//checked
 doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 {
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
@@ -1681,7 +1648,7 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 
 	doca_flow_fwd fwd_ingress = {};
 	fwd_ingress.type = DOCA_FLOW_FWD_PIPE;
-	fwd_ingress.next_pipe = match_ingress_decrypt_pipe;//ingress_decrypt_pipe;
+	fwd_ingress.next_pipe = match_ingress_decrypt_pipe;
 
 	doca_flow_fwd fwd_egress = {};
 	fwd_egress.type = DOCA_FLOW_FWD_PIPE;
@@ -1692,9 +1659,12 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 
 	uint16_t pipe_queue = 0;
 
+	DOCA_LOG_ERR("=== Creating ROOT pipe entries for pf_port_id=%d, vf_port_id=%d", 
+	             pf_dev.pf_port_id, pf_dev.vf_port_id);
+
 	IF_SUCCESS(result,
 		   doca_flow_pipe_control_add_entry(pipe_queue,
-						    2, //changed prio, earlier it was 1
+						    2,
 						    ingress_root_pipe,
 						    &ipv6_from_uplink,
 						    &mask,
@@ -1770,12 +1740,15 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 	return result;
 }
 
+//uint32_t PSP_GatewayFlows::next_crypto_serial_id_ = 0;
+
 uint32_t PSP_GatewayFlows::next_crypto_id(void)
 {
         if (next_crypto_serial_id_ > app_config->max_tunnels) {
                 return UINT32_MAX;
         }
-        return pf_dev.crypto_ids[next_crypto_serial_id_++];
+	uint32_t id = pf_dev.crypto_ids[next_crypto_serial_id_++];
+        return id;
 }
 
 doca_error_t PSP_GatewayFlows::generate_keys_spis(uint32_t key_len_bits,
@@ -1900,18 +1873,17 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
 	DOCA_LOG_DBG("\n>> %s", __FUNCTION__);
 	doca_error_t result = DOCA_SUCCESS;
         struct doca_flow_pipe *match_pipe;
-        uint32_t egress_acl_entry_idx = session.crypto_id;
+        uint32_t egress_acl_entry_idx = crypto_id;
 
 	bool ipv6_pip = session.remote_pip.find(":") != std::string::npos;
 	// If we receive a non-NULL entry, instead of creating a new entry, we just update the old one in-place
-	bool update_entry = *entry != NULL;
+	//bool update_entry = *entry != NULL;
 
-	DOCA_LOG_ERR("%s encrypt flow entry: dst_pip %s, dst_vip %s, SPI %d, crypto_id %d",
-			update_entry ? "Updating" : "Adding",
+	DOCA_LOG_ERR("Adding encrypt flow entry: dst_pip %s, dst_vip %s, SPI %d, crypto_id %d on PF %d and VF %d",
 		     session.remote_pip.c_str(),
 		     session.remote_vip.c_str(),
 		     spi,
-		     crypto_id);
+		     crypto_id, pf_dev.pf_port_id, pf_dev.vf_port_id);
 
         // Setup for crypto actions
         doca_flow_crypto crypto_actions = {};
@@ -1923,7 +1895,7 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
         	format_encap_data_ipv4(session, spi, crypto_actions.crypto_encap.encap_data);
 		DOCA_LOG_ERR("pip is ipv4");
 	}
-        crypto_actions.crypto.crypto_id = session.crypto_id;
+        crypto_actions.crypto.crypto_id = crypto_id;
 
         // Create ordered list element and list
         struct doca_flow_ordered_list_element element = {};
@@ -1946,6 +1918,7 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
         auto p_fwd = sampling_enabled() ? &fwd_to_sampling : &fwd_to_wire;
 
         // Add entry to egress_acl ordered list using session->crypto_id as entry index
+
         result = add_single_entry_ordered_list(0,
                                                egress_acl_pipe,
                                                pf_dev.pf_port,
@@ -1958,7 +1931,7 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
                 return result;
         } else {
                 DOCA_LOG_DBG("Added egress_acl pipe entry");
-	}
+        }
 
         /* match pipe entry */
         // Setup for match pipe entry
@@ -1968,40 +1941,12 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
         fwd_to_ordered_list.ordered_list_pipe.pipe = egress_acl_pipe;
         fwd_to_ordered_list.ordered_list_pipe.idx = egress_acl_entry_idx;
 
-	if (1) {
-                match_pipe = match_egress_acl_ipv4_pipe;
-                encap_encrypt_match.parser_meta.outer_l3_type = DOCA_FLOW_L3_META_IPV4;
-                encap_encrypt_match.outer.l3_type = DOCA_FLOW_L3_TYPE_IP4;
-		inet_pton(AF_INET, session.remote_vip.c_str(), &encap_encrypt_match.outer.ip4.dst_ip);
-		inet_pton(AF_INET, session.local_vip.c_str(), &encap_encrypt_match.outer.ip4.src_ip);
-		DOCA_LOG_ERR("entry is ipv4");
-	} else {
-#if 0
-		//TODO: Add support for IPv6
-		assert(match_egress_acl_ipv6_pipe);
-		match_pipe = match_egress_acl_ipv6_pipe;
-		encap_encrypt_match.parser_meta.outer_l3_type = DOCA_FLOW_L3_META_IPV6;
-		encap_encrypt_match.outer.l3_type = DOCA_FLOW_L3_TYPE_IP6;
-		SET_IP6_ADDR(encap_encrypt_match.outer.ip6.src_ip,
-				pf_dev.local_pip.ipv6_addr[0],
-				pf_dev.local_pip.ipv6_addr[1],
-				pf_dev.local_pip.ipv6_addr[2],
-				pf_dev.local_pip.ipv6_addr[3]);
-		dst_vip_id = rte_hash_lookup(app_config->ip6_table, session->dst_vip.ipv6_addr);
-		if (dst_vip_id < 0) {
-			DOCA_LOG_WARN("Failed to find source IP in table");
-			int ret = rte_hash_add_key(app_config->ip6_table, session->dst_vip.ipv6_addr);
-			if (ret < 0) {
-				DOCA_LOG_ERR("Failed to add address to hash table");
-				return DOCA_ERROR_DRIVER;
-			}
-			dst_vip_id = rte_hash_lookup(app_config->ip6_table, session->dst_vip.ipv6_addr);
-		}
-		encap_encrypt_match.meta.u32[2] = dst_vip_id;
-#endif
-		DOCA_LOG_ERR("entry is ipv6");
-	}
-		
+        match_pipe = match_egress_acl_ipv4_pipe;
+        encap_encrypt_match.parser_meta.outer_l3_type = DOCA_FLOW_L3_META_IPV4;
+        encap_encrypt_match.outer.l3_type = DOCA_FLOW_L3_TYPE_IP4;
+        inet_pton(AF_INET, session.remote_vip.c_str(), &encap_encrypt_match.outer.ip4.dst_ip);
+        inet_pton(AF_INET, session.local_vip.c_str(), &encap_encrypt_match.outer.ip4.src_ip);
+
         result = add_single_entry(0,
                                   match_pipe,
                                   pf_dev.pf_port,
@@ -2017,9 +1962,9 @@ doca_error_t PSP_GatewayFlows::config_encrypt_entry(const psp_session_desc_t &se
                 return result;
         } else {
                 DOCA_LOG_DBG("Added match pipe session entry: %p", entry);
-	}
+        }
 
-	return result;
+        return result;
 }
 
 doca_error_t PSP_GatewayFlows::add_ingress_acl_entry(const psp_session_desc_t &session, uint32_t spi, doca_flow_pipe_entry **entry)
@@ -2033,22 +1978,18 @@ doca_error_t PSP_GatewayFlows::add_ingress_acl_entry(const psp_session_desc_t &s
         doca_flow_match match = {};
         match.parser_meta.psp_syndrome = 0;
         doca_flow_header_format *match_hdr = &match.inner;
-        //if (session->src_vip.type == DOCA_FLOW_L3_TYPE_IP4) {
-                pipe = match_ingress_acl_ipv4_pipe;
-                match.tun.type = DOCA_FLOW_TUN_PSP;
-                match.tun.psp.spi = RTE_BE32(spi);//RTE_BE32(session->spi_ingress);
-                match_hdr->l3_type = DOCA_FLOW_L3_TYPE_IP4;
-		if (inet_pton(AF_INET, session.remote_vip.c_str(), &match_hdr->ip4.src_ip) != 1) {
-                	DOCA_LOG_ERR("Failed to convert remote_vip %s to IPv4", session.remote_vip.c_str());
-                	return DOCA_ERROR_BAD_STATE;
-        	}
-		if (inet_pton(AF_INET, session.local_vip.c_str(), &match_hdr->ip4.dst_ip) != 1) {
-                	DOCA_LOG_ERR("Failed to convert remote_vip %s to IPv4", session.remote_vip.c_str());
-                	return DOCA_ERROR_BAD_STATE;
-        	}
-		DOCA_LOG_ERR("Entry is IPv4");
-	//}
-        // Set up forward to ordered list pipe using session->crypto_id as index
+        pipe = match_ingress_acl_ipv4_pipe;
+        match.tun.type = DOCA_FLOW_TUN_PSP;
+        match.tun.psp.spi = RTE_BE32(spi);
+        match_hdr->l3_type = DOCA_FLOW_L3_TYPE_IP4;
+	if (inet_pton(AF_INET, session.remote_vip.c_str(), &match_hdr->ip4.src_ip) != 1) {
+		DOCA_LOG_ERR("Failed to convert remote_vip %s to IPv4", session.remote_vip.c_str());
+                return DOCA_ERROR_BAD_STATE;
+        }
+	if (inet_pton(AF_INET, session.local_vip.c_str(), &match_hdr->ip4.dst_ip) != 1) {
+                DOCA_LOG_ERR("Failed to convert remote_vip %s to IPv4", session.remote_vip.c_str());
+                return DOCA_ERROR_BAD_STATE;
+        }
         doca_flow_fwd fwd_to_ordered_list = {};
         fwd_to_ordered_list.type = DOCA_FLOW_FWD_ORDERED_LIST_PIPE;
         fwd_to_ordered_list.ordered_list_pipe.pipe = ingress_acl_pipe;
@@ -2065,8 +2006,7 @@ doca_error_t PSP_GatewayFlows::add_ingress_acl_entry(const psp_session_desc_t &s
                                     nullptr,
                                     &fwd_to_ordered_list,
                                     entry));
-
-        return result;
+        return DOCA_SUCCESS;
 }
 
 doca_error_t PSP_GatewayFlows::remove_single_entry(doca_flow_pipe_entry *entry)
@@ -2128,7 +2068,6 @@ std::pair<uint64_t, uint64_t> PSP_GatewayFlows::perform_pipe_query(pipe_query *q
 void PSP_GatewayFlows::show_static_flow_counts(void)
 {
 	std::vector<pipe_query> queries;
-
 	queries.emplace_back(pipe_query{nullptr, ipv4_rss_entry_ingress, "ipv4_rss_entry_ingress"});
 	queries.emplace_back(pipe_query{nullptr, ipv6_rss_entry_ingress, "ipv6_rss_entry_ingress"});
 	queries.emplace_back(pipe_query{nullptr, ipv4_rss_entry_egress, "ipv4_rss_entry_egress"});
@@ -2138,13 +2077,10 @@ void PSP_GatewayFlows::show_static_flow_counts(void)
 	queries.emplace_back(pipe_query{nullptr, root_jump_to_egress_ipv4_entry, "root_jump_to_egress_ipv4_entry"});
 	queries.emplace_back(pipe_query{nullptr, root_default_drop, "root_miss_drop"});
 	queries.emplace_back(pipe_query{fwd_to_wire_pipe, fwd_to_wire_entry, "fwd_to_wire_entry"});
-	queries.emplace_back(pipe_query{ingress_decrypt_pipe, default_decrypt_entry, "ingress_decrypt_pipe"});
-	queries.emplace_back(pipe_query{ingress_sampling_pipe, default_ingr_sampling_entry, "ingress_sampling_pipe"});
         queries.emplace_back(
                 pipe_query{ingress_inner_ip_classifier_pipe, ingress_ipv4_clasify_entry, "ingress_ipv4_clasify"});
         queries.emplace_back(
                 pipe_query{ingress_inner_ip_classifier_pipe, ingress_ipv6_clasify_entry, "ingress_ipv6_clasify"});
-	queries.emplace_back(pipe_query{ingress_acl_pipe, default_ingr_acl_ipv4_entry, "ingress_acl_pipe"});
 	queries.emplace_back(pipe_query{nullptr, vf_arp_to_rss, "vf_arp_to_rss"});
 	queries.emplace_back(pipe_query{nullptr, arp_empty_pipe_entry, "arp_empty_pipe_entry"});
 	for (int i = 0; i < NUM_OF_PSP_SYNDROMES; i++) {
@@ -2155,12 +2091,6 @@ void PSP_GatewayFlows::show_static_flow_counts(void)
 	queries.emplace_back(pipe_query{egress_acl_pipe, nullptr, "egress_acl_pipe"});
         queries.emplace_back(pipe_query{nullptr, ipv4_empty_pipe_entry, "fwd_egress_acl_ipv4"});
         queries.emplace_back(pipe_query{nullptr, ipv6_empty_pipe_entry, "fwd_egress_acl_ipv6"});
-	queries.emplace_back(pipe_query{egress_sampling_pipe, default_egr_sampling_entry, "egress_sampling_pipe"});
-	queries.emplace_back(pipe_query{nullptr, empty_pipe_entry, "arp_packets_intercepted"});
-	queries.emplace_back(pipe_query{ingress_decrypt_pipe, default_ingr_acl_ipv4_entry, "default_ingr_acl_ipv4_entry"});
-	queries.emplace_back(pipe_query{ingress_decrypt_pipe, default_ingr_acl_ipv6_entry, "default_ingr_acl_ipv6_entry"});
-        queries.emplace_back(pipe_query{ingress_decrypt_pipe, default_ingr_acl_ipv4_match_entry, "default_ingr_acl_ipv4_match_entry"});
-        queries.emplace_back(pipe_query{ingress_decrypt_pipe, default_ingr_acl_ipv6_match_entry, "default_ingr_acl_ipv6_match_entry"});
 
 	uint64_t total_pkts = 0;
 	for (auto &query : queries) {
@@ -2170,7 +2100,7 @@ void PSP_GatewayFlows::show_static_flow_counts(void)
 
 	if (total_pkts != prev_static_flow_count) {
 		total_pkts = 0;
-		DOCA_LOG_INFO("%s -------------------------", nic_info.pci.c_str());
+		DOCA_LOG_INFO("%s with PF id %d-------------------------", nic_info.pci.c_str(), nic_info.pf_port_id);
 		for (auto &query : queries) {
 			auto hits_misses = perform_pipe_query(&query, false);
 			total_pkts += hits_misses.first + hits_misses.second;
@@ -2199,7 +2129,6 @@ void PSP_GatewayFlows::show_session_flow_counts(void)
 			session.second.pkt_count_egress = stats.counter.total_pkts;
 		}
 	}
-
 	if (!app_config->disable_ingress_acl) {
 		for (auto &session : ingress_sessions) {
 			doca_flow_resource_query stats = {};
@@ -2249,13 +2178,13 @@ doca_error_t PSP_GatewayFlows::add_single_entry_ordered_list(uint16_t pipe_queue
 		DOCA_LOG_ERR("Failed to add entry: %s", doca_error_get_descr(result));
 		return result;
 	}
-	result = doca_flow_entries_process(port, pipe_queue, DEFAULT_TIMEOUT_US, num_of_entries);
+repeat:
+	result = doca_flow_entries_process(port, pipe_queue, DEFAULT_TIMEOUT_US, 0);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to process entry: %s", doca_error_get_descr(result));
 		return result;
 	}
 
-#if 0
 	if (app_config->status[pipe_queue].nb_processed != num_of_entries || app_config->status[pipe_queue].failure) {
 		DOCA_LOG_ERR("Failed to process entry; nb_processed = %d, failure = %d",
 			     app_config->status[pipe_queue].nb_processed,
@@ -2264,7 +2193,6 @@ doca_error_t PSP_GatewayFlows::add_single_entry_ordered_list(uint16_t pipe_queue
 			return DOCA_ERROR_BAD_STATE;
 		goto repeat;
 	}
-#endif
 	return result;
 }
 

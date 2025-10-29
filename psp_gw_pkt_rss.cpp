@@ -111,21 +111,20 @@ int lcore_pkt_proc_func(void *lcore_args)
 		// handle high-rate tasks:
 		params->psp_svc->lcore_callback();
 
-		for(int port_id = 0; port_id < nb_nics; port_id++) {
-			uint16_t nb_rx_packets = rte_eth_rx_burst(params->pf_port_id_list[port_id], queue_id, rx_packets[port_id], MAX_RX_BURST_SIZE);
+		for(int nic_id = 0; nic_id < nb_nics; nic_id++) {
+			uint16_t nb_rx_packets = rte_eth_rx_burst(params->pf_port_id_list[nic_id], queue_id, rx_packets[nic_id], MAX_RX_BURST_SIZE);
 			for (int i = 0; i < nb_rx_packets && !*params->force_quit; i++) {
-				handle_packet(params, params->pf_port_id_list[port_id], queue_id, rx_packets[port_id][i]);
+				handle_packet(params, params->pf_port_id_list[nic_id], queue_id, rx_packets[nic_id][i]);
 			}
 
 			if (nb_rx_packets) {
-				DOCA_LOG_INFO("%d packets on port id %d", nb_rx_packets, params->pf_port_id_list[port_id]);
-				rte_pktmbuf_free_bulk(rx_packets[port_id], nb_rx_packets);
+				rte_pktmbuf_free_bulk(rx_packets[nic_id], nb_rx_packets);
 			}
 			if (nb_rx_packets && params->config->show_rss_durations) {
 				double sec = (double)(rte_rdtsc() - t_start) * tsc_to_seconds;
 				DOCA_LOG_INFO("L-Core %d port %d: processed %d packets in %f seconds",
 						lcore_id,
-						params->pf_port_id_list[port_id],
+						params->pf_port_id_list[nic_id],
 						nb_rx_packets,
 						sec);
 			}

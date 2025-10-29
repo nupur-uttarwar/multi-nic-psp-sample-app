@@ -37,7 +37,6 @@
 #include "psp_gw_config.h"
 
 static const int NUM_OF_PSP_SYNDROMES = 4; // None, ICV Fail, Bad Trailer
-
 struct psp_gw_app_config;
 struct entries_status;
 #if 0
@@ -110,6 +109,7 @@ struct psp_session_egress_t {
  *        on a remote host
  */
 struct psp_session_ingress_t {
+	uint32_t crypto_id;
 	struct doca_flow_pipe_entry *ingress_acl_entry;
 	struct doca_flow_pipe_entry *expiring_ingress_acl_entry;
 	uint64_t pkt_count_ingress;
@@ -366,7 +366,7 @@ private:
 	 * @is_ipv4 [in]: if true match ipv4 address, else ipv6
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	doca_error_t match_ingress_acl_pipe_create(bool is_ipv4);
+	doca_error_t match_ingress_acl_pipe_create();
 
 	/**
 	 * Creates the pipe to sample packets with the PSP.S bit set

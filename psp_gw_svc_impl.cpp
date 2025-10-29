@@ -67,7 +67,6 @@ PSP_GatewayImpl::~PSP_GatewayImpl()
 
 doca_error_t PSP_GatewayImpl::request_tunnels_to_host(const std::vector<psp_session_desc_t> &session_descs)
 {
-	DOCA_LOG_ERR("Inside request_tunnels_to_host");
 	std::vector<doca_error_t> results;
 
 	if (session_descs.size() == 0) {
@@ -81,7 +80,6 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(const std::vector<psp_sess
 	}
 
 	std::vector<spi_key_t> ingress_spi_keys;
-	DOCA_LOG_ERR("Calling create_ingress_paths - add_ingress_acl_entry");
 	results = nic->create_ingress_paths(session_descs, ingress_spi_keys);
 	if (check_any_failed(results)) {
 		DOCA_LOG_ERR("Failed to create new ingress paths");
@@ -126,12 +124,10 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(const std::vector<psp_sess
 		}
 	}
 
-#if 0
 	results = nic->expire_ingress_paths(session_descs, remote_updated);
 	if (check_any_failed(results)) {
 		DOCA_LOG_WARN("Failed to expire old ingress paths");
 	}
-#endif
 	return DOCA_SUCCESS;
 }
 
@@ -178,7 +174,6 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 		return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "No tunnels requested");
 	}
 
-	DOCA_LOG_ERR("Inside RequestMultipleTunnelParams");
 	std::vector<psp_session_desc_t> relevant_sessions(request->tunnels_size());
 	std::vector<spi_keyptr_t> egress_spi_keys(request->tunnels_size());
 	for (int i = 0; i < request->tunnels_size(); i++) {
@@ -220,7 +215,6 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 			response->add_tunnels_params());
 	}
 
-	DOCA_LOG_ERR("Inside RequestMultipleTunnelParams - stage 2");
 	std::vector<bool> remote_updated(relevant_sessions.size(), true);
 	for (doca_error_t result : results) {
 		remote_updated.push_back(result == DOCA_SUCCESS);

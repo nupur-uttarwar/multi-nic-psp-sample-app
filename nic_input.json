@@ -16,9 +16,9 @@
         {
             "hostname": "doca-vr-006",
             "pci": "0000:ca:00.1",
-            "nexthop": "94:6d:ae:a9:b0:b0",
+            "nexthop": "9c:63:c0:2b:cb:79",
             "repr": "eth2",
-            "pip": "fe80::9e63:c0ff:fe28:82a8",
+            "pip": "fe80::9e63:c0ff:fe28:82a9",
             "grpc-address": "10.137.189.6",
             "vfmac": "7e:20:4c:d4:13:95",
             "vips": [
@@ -64,11 +64,11 @@
         {
             "hostname": "doca-vr-005",
             "pci": "0000:ca:00.1",
-            "nexthop": "94:6d:ae:a9:b0:b0",
-            "repr": "eth3",
-            "pip": "fe80::9e63:c0ff:fe2b:cb78",
+            "nexthop": "9c:63:c0:28:82:a9",
+            "repr": "eth2",
+            "pip": "fe80::9e63:c0ff:fe2b:cb79",
             "grpc-address": "10.137.189.5",
-            "vfmac": "d6:f5:eb:d3:00:fe",
+            "vfmac": "3e:f2:ab:75:e7:a9",
             "vips": [
                 "70.0.0.5"
             ]
