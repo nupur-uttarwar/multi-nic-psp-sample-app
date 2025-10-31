@@ -128,7 +128,6 @@ doca_error_t PSP_GatewayImpl::request_tunnels_to_host(const std::vector<psp_sess
 	if (check_any_failed(results)) {
 		DOCA_LOG_WARN("Failed to expire old ingress paths");
 	}
-
 	return DOCA_SUCCESS;
 }
 
@@ -155,6 +154,7 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 	session_desc.remote_pip = remote_nic->pip;
 
 	std::vector<psp_session_desc_t> session_descs = {session_desc};
+	DOCA_LOG_ERR("From handle_miss_packet - calling request_tunnels_to_host");
 	doca_error_t result = request_tunnels_to_host(session_descs);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to request tunnel to %s", session_desc.remote_vip.c_str());
@@ -423,19 +423,23 @@ doca_error_t PSP_GatewayImpl::init_doca_flow(void)
 	struct doca_flow_cfg *flow_cfg;
 	IF_SUCCESS(result, doca_flow_cfg_create(&flow_cfg));
 	IF_SUCCESS(result, doca_flow_cfg_set_pipe_queues(flow_cfg, nb_queues));
-	IF_SUCCESS(result, doca_flow_cfg_set_nr_counters(flow_cfg, nb_nics * config->max_tunnels * NUM_OF_PSP_SYNDROMES + 10));
+	//IF_SUCCESS(result, doca_flow_cfg_set_nr_counters(flow_cfg, nb_nics * config->max_tunnels * NUM_OF_PSP_SYNDROMES + 10));
 	IF_SUCCESS(result, doca_flow_cfg_set_mode_args(flow_cfg, "switch,hws,isolated,expert"));
 	IF_SUCCESS(result, doca_flow_cfg_set_cb_entry_process(flow_cfg, PSP_GatewayImpl::check_for_valid_entry));
+	IF_SUCCESS(result, doca_flow_cfg_set_resource_mode(flow_cfg, DOCA_FLOW_RESOURCE_MODE_PORT));
+#if 0
 	IF_SUCCESS(result,
 		   doca_flow_cfg_set_nr_shared_resource(flow_cfg,
 							config->crypto_ids_per_nic * nb_nics,
 							DOCA_FLOW_SHARED_RESOURCE_PSP));
-	IF_SUCCESS(result, doca_flow_cfg_set_nr_shared_resource(flow_cfg, 4 * nb_nics, DOCA_FLOW_SHARED_RESOURCE_MIRROR));
-	IF_SUCCESS(result, doca_flow_init(flow_cfg));
 
 	if (result == DOCA_SUCCESS)
 		DOCA_LOG_INFO("Initialized DOCA Flow for a max of %d tunnels", config->max_tunnels);
+#endif
+        IF_SUCCESS(result, doca_flow_init(flow_cfg));
 
+        if (result == DOCA_SUCCESS)
+                DOCA_LOG_INFO("Initialized DOCA Flow for a max of %d tunnels", config->max_tunnels);
 	if (flow_cfg)
 		doca_flow_cfg_destroy(flow_cfg);
 	return result;

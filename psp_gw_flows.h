@@ -37,8 +37,9 @@
 #include "psp_gw_config.h"
 
 static const int NUM_OF_PSP_SYNDROMES = 4; // None, ICV Fail, Bad Trailer
-
 struct psp_gw_app_config;
+struct entries_status;
+#if 0
 
 /**
  * @brief user context struct that will be used in entries process callback
@@ -48,7 +49,7 @@ struct entries_status {
 	int nb_processed;     /* number of entries that was already processed */
 	int entries_in_queue; /* number of entries in queue that is waiting to process */
 };
-
+#endif
 /**
  * @brief Maintains the state of the host PF
  */
@@ -68,13 +69,14 @@ struct psp_pf_dev {
 
 	struct doca_flow_ip_addr local_pip; // Physical/Outer IP addr
 	std::string local_pip_str;
-
+	std::vector<uint32_t> crypto_ids;
 };
 
 struct psp_session_desc_t {
 	std::string local_vip;
 	std::string remote_vip;
 	std::string remote_pip;
+	uint32_t crypto_id;   /* Internal shared-resource index */
 };
 
 struct psp_session_desc_hash {
@@ -107,6 +109,7 @@ struct psp_session_egress_t {
  *        on a remote host
  */
 struct psp_session_ingress_t {
+	uint32_t crypto_id;
 	struct doca_flow_pipe_entry *ingress_acl_entry;
 	struct doca_flow_pipe_entry *expiring_ingress_acl_entry;
 	uint64_t pkt_count_ingress;
@@ -255,10 +258,22 @@ private:
 	 *
 	 * @port_id [in]: the numerical index of the port
 	 * @port_dev [in]: the doca_dev returned from doca_dev_open()
+	 * @app_cfg [in]: the psp app configuration
 	 * @port [out]: the resulting port object
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	doca_error_t start_port(uint16_t port_id, doca_dev *port_dev, doca_dev_rep *port_rep, doca_flow_port **port);
+	doca_error_t start_port(uint16_t port_id,
+				doca_dev *port_dev,
+				const psp_gw_app_config *app_cfg,
+				doca_dev_rep *port_rep,
+				doca_flow_port **port);
+
+        /**
+         * @brief initialization of entries status vector in app_cfg
+         *
+         * @app_cfg [in]: the psp app configuration
+         */
+        void init_status(psp_gw_app_config *app_cfg);
 
 	/**
 	 * @brief handles the binding of the shared resources to ports
@@ -318,15 +333,40 @@ private:
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	doca_error_t configure_mirrors(void);
+	doca_error_t configure_flooding(void);
+
+        /**
+         * Creates the pipe that match ipv6 destination address in egress domain
+         * Write on meta data the hash of the source address
+         *
+         * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+         */
+        doca_error_t egress_dst_ip6_pipe_create(void);
+
+        /**
+         * Creates the pipe that match ipv6 source address in ingress domain
+         * Write on meta data the hash of the destination address
+         *
+         * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+         */
+        doca_error_t ingress_src_ip6_pipe_create(void);
 
 	/**
 	 * Creates the pipe to only accept incoming packets from
-	 * appropriate sources.
+	 * appropriate sources. Create 1 pipe with 2 sequences (IPv4 and IPv6)
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	doca_error_t ingress_acl_pipe_create(void);
+	doca_error_t ingress_acl_pipe_create();
+
+	/**
+	 * Creates the pipe to match incoming packets from appropriate sources.
+	 * Create 2 pipes, each one sends to a different sequence of the ingress_acl_pipe
+	 *
+	 * @is_ipv4 [in]: if true match ipv4 address, else ipv6
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t match_ingress_acl_pipe_create();
 
 	/**
 	 * Creates the pipe to sample packets with the PSP.S bit set
@@ -343,6 +383,27 @@ private:
 	doca_error_t ingress_decrypt_pipe_create(void);
 
 	/**
+	 * Creates the match ingress decrypt pipe that forwards PSP packets from uplink to decryption.
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t match_ingress_decrypt_pipe_create(void);
+
+        /**
+         * @brief Creates a pipe that classify if inner IP is ipv6 or ipv4 and based on that send to acl pipe
+         *
+         * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+         */
+        doca_error_t ingress_inner_classifier_pipe_create(void);
+
+        /**
+         * @brief Creates a pipe to fwd packets to port
+         *
+         * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+         */
+        doca_error_t fwd_to_wire_pipe_create(void);
+
+	/**
 	 * @brief Creates a pipe to fwd packets to port
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
@@ -357,11 +418,21 @@ private:
 	doca_error_t egress_sampling_pipe_create(void);
 
 	/**
-	 * Creates the pipe to trap outgoing packets to unregistered destinations
+	 * Creates the pipe to trap outgoing packets to unregistered destinations.
+	 * Create 1 pipe with 2 sequences (IPv4 and IPv6)
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	doca_error_t egress_acl_pipe_create(void);
+	doca_error_t egress_acl_pipe_create();
+
+	/**
+	 * Creates the pipe to match outgoing packets from appropriate destinations.
+	 * Creates one pipe for IPv4 or IPv6 that sends to a different sequence of the egress_acl_pipe
+	 *
+	 * @param [in] is_ipv4: true for IPv4 pipe, false for IPv6 pipe
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t match_egress_acl_pipe_create(bool is_ipv4);
 
 	/**
 	 * @brief Creates a pipe whose only purpose is to relay
@@ -372,7 +443,7 @@ private:
 	 * should forward its traffic.
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	doca_error_t empty_pipe_create(doca_flow_pipe *next_pipe);
+	doca_error_t empty_pipe_create(); //doca_flow_pipe *next_pipe);
 
 	/**
 	 * @brief Creates the first pipe hit by packets arriving to
@@ -388,14 +459,17 @@ private:
 	 *
 	 * @return: The crypto_id to use for the PSP shared resource
 	 */
-	uint32_t allocate_crypto_id(void);
-
-	/**
-	 * @brief Releases the given crypto_id so that it can be reused
-	 *
-	 * @crypto_id [in]: The crypto_id to release
-	 */
-	void release_crypto_id(uint32_t crypto_id);
+	 //uint32_t allocate_crypto_id(void);
+        /**
+         * @brief Determines the next available crypto_id at which to store the
+         * next PSP encryption key
+         *
+         * @return: The crypto_id to use for the PSP shared resource
+         */
+        uint32_t next_crypto_id(void);
+	
+        // Used to assign a unique shared-resource ID to each encryption flow.
+        uint32_t next_crypto_serial_id_ = 0;
 
 	/**
 	 * @brief Generates a new SPI and key pair for use in a PSP session
@@ -437,6 +511,58 @@ private:
 	doca_error_t set_egress_path(const psp_session_desc_t &session, const spi_keyptr_t &spi_key);
 	void format_encap_data_ipv6(const psp_session_desc_t &session, uint32_t spi, uint8_t *encap_data);
 	void format_encap_data_ipv4(const psp_session_desc_t &session, uint32_t spi, uint8_t *encap_data);
+	/*
+	 * @brief wrapper for doca_flow_pipe_add_entry()
+	 * Handles the call to process_entry and its callback for a single entry.
+	 *
+	 * @pipe_queue [in]: the queue index associated with the caller cpu core
+	 * @pipe [in]: the pipe on which to add the entry
+	 * @port [in]: the port which owns the pipe
+	 * @index [in]: packet hash index
+	 * @fwd [in]: packet forwarding actions
+	 * @entry [out]: the newly created flow entry
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t add_single_flooding_entry(uint16_t pipe_queue,
+					       doca_flow_pipe *pipe,
+					       doca_flow_port *port,
+					       uint32_t index,
+					       const doca_flow_fwd *fwd,
+					       doca_flow_pipe_entry **entry);
+	/**
+	 * @brief wrapper for doca_flow_pipe_ordered_list_add_entry()
+	 * Handles the call to process_entry and its callback for a single entry.
+	 *
+	 * @pipe_queue [in]: the queue index associated with the caller cpu core
+	 * @pipe [in]: the pipe on which to add the entry
+	 * @port [in]: the port which owns the pipe
+	 * @idx [in]: the index of the entry to add
+	 * @ordered_list [in]: the ordered list of entries to add
+	 * @fwd [in]: packet forwarding actions
+	 * @entry [out]: the newly created flow entry
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t add_single_entry_ordered_list(uint16_t pipe_queue,
+						   doca_flow_pipe *pipe,
+						   doca_flow_port *port,
+						   uint32_t idx,
+						   const struct doca_flow_ordered_list *ordered_list,
+						   const struct doca_flow_fwd *fwd,
+						   doca_flow_pipe_entry **entry);
+
+	/**
+	 * @brief wrapper for doca_flow_pipe_create()
+	 * Handles the call to create hash flooding pipe.
+	 *
+	 * @port [in]: the port which owns the pipe
+	 * @domain [in]: the hash flooding pipe domain
+	 * @pipe [out]: the newly created pipe
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t prepare_flooding_pipe(struct doca_flow_port *port,
+					   enum doca_flow_pipe_domain domain,
+					   struct doca_flow_pipe **pipe);
+
 
 	struct pipe_query;
 	std::pair<uint64_t, uint64_t> perform_pipe_query(pipe_query *query, bool suppress_output);
@@ -470,18 +596,31 @@ private:
 	struct doca_flow_pipe *rss_pipe_egress{};
 	struct doca_flow_pipe *ingress_root_pipe{};
 
+	// flooding pipes
+	doca_flow_pipe *flooding_ingress_classifier_rss_pipe{};
+	doca_flow_pipe *flooding_egress_wire_rss_pipe{};
+
 	// net-to-host pipes
 	struct doca_flow_pipe *ingress_decrypt_pipe{};
+	struct doca_flow_pipe *match_ingress_decrypt_pipe{};
 	struct doca_flow_pipe *ingress_sampling_pipe{};
+	struct doca_flow_pipe *ingress_inner_ip_classifier_pipe{};
 	struct doca_flow_pipe *ingress_acl_pipe{};
+	struct doca_flow_pipe *match_ingress_acl_ipv4_pipe{};
+	struct doca_flow_pipe *match_ingress_acl_ipv6_pipe{};
 
 	// host-to-net pipes
 	struct doca_flow_pipe *egress_acl_pipe{};
+	struct doca_flow_pipe *match_egress_acl_ipv4_pipe{};
+	struct doca_flow_pipe *match_egress_acl_ipv6_pipe{};
 	struct doca_flow_pipe *egress_sampling_pipe{};
 	struct doca_flow_pipe *egress_encrypt_pipe{};
 	struct doca_flow_pipe *syndrome_stats_pipe{};
 	struct doca_flow_pipe *empty_pipe{};
 	struct doca_flow_pipe *empty_pipe_not_sampled{};
+	struct doca_flow_pipe *fwd_to_wire_pipe{};
+	struct doca_flow_pipe *ingress_src_ip6_pipe{};
+	struct doca_flow_pipe *egress_dst_ip6_pipe{};
 
 	// static pipe entries
 	struct doca_flow_pipe_entry *ipv4_rss_entry_ingress{};
@@ -489,17 +628,36 @@ private:
 	struct doca_flow_pipe_entry *ipv4_rss_entry_egress{};
 	struct doca_flow_pipe_entry *ipv6_rss_entry_egress{};
 	struct doca_flow_pipe_entry *default_decrypt_entry{};
+	struct doca_flow_pipe_entry *default_decrypt_match_entry{};
 	struct doca_flow_pipe_entry *default_ingr_sampling_entry{};
-	struct doca_flow_pipe_entry *default_ingr_acl_entry{};
+	struct doca_flow_pipe_entry *default_ingr_acl_ipv4_entry{};
+	struct doca_flow_pipe_entry *default_ingr_acl_ipv6_entry{};
+	struct doca_flow_pipe_entry *default_ingr_acl_ipv4_match_entry{};
+	struct doca_flow_pipe_entry *default_ingr_acl_ipv6_match_entry{};
 	struct doca_flow_pipe_entry *default_egr_sampling_entry{};
+        struct doca_flow_pipe_entry *default_egr_acl_ipv4_entry{};
+        struct doca_flow_pipe_entry *default_egr_acl_ipv6_entry{};
+        struct doca_flow_pipe_entry *default_egr_acl_ipv4_match_entry{};
+        struct doca_flow_pipe_entry *default_egr_acl_ipv6_match_entry{};
+        struct doca_flow_pipe_entry *ingress_ipv4_clasify_entry{};
+        struct doca_flow_pipe_entry *ingress_ipv6_clasify_entry{};
+
+
 	struct doca_flow_pipe_entry *root_jump_to_ingress_ipv6_entry{};
 	struct doca_flow_pipe_entry *root_jump_to_ingress_ipv4_entry{};
-	struct doca_flow_pipe_entry *root_jump_to_egress_entry{};
+	struct doca_flow_pipe_entry *root_jump_to_egress_ipv4_entry{};
 	struct doca_flow_pipe_entry *vf_arp_to_rss{};
 	struct doca_flow_pipe_entry *syndrome_stats_entries[NUM_OF_PSP_SYNDROMES]{};
 	struct doca_flow_pipe_entry *empty_pipe_entry{};
+	struct doca_flow_pipe_entry *fwd_to_wire_entry{};
+	struct doca_flow_pipe_entry *arp_empty_pipe_entry{};
+        struct doca_flow_pipe_entry *ipv4_empty_pipe_entry{};
+        struct doca_flow_pipe_entry *ipv6_empty_pipe_entry{};
 	struct doca_flow_pipe_entry *root_default_drop{};
-
+	struct doca_flow_pipe_entry *flooding_ingress_inner_ip_classifier_entry{};
+	struct doca_flow_pipe_entry *flooding_ingress_rss_entry{};
+	struct doca_flow_pipe_entry *flooding_egress_to_rss_entry{};
+	struct doca_flow_pipe_entry *flooding_egress_to_wire_entry{};
 	struct doca_flow_monitor monitor_count{};
 
 	// Shared resource IDs

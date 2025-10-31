@@ -115,6 +115,15 @@ struct psp_gw_net_config {
 };
 
 /**
+ * @brief user context struct that will be used in entries process callback
+ */
+struct entries_status {
+        bool failure;         /* will be set to true if some entry status will not be success */
+        int nb_processed;     /* number of entries that was already processed */
+        int entries_in_queue; /* number of entries in queue that is waiting to process */
+};
+
+/**
  * @brief describes the configuration of the PSP networking service on
  *        the local host.
  */
@@ -162,6 +171,7 @@ struct psp_gw_app_config {
 
 	uint32_t ingress_sample_meta_indicator; //!< Value to assign pkt_meta when sampling incoming packets
 	uint32_t egress_sample_meta_indicator;	//!< Value to assign pkt_meta when sampling outgoing packets
+	uint32_t return_to_vf_indicator; /* Value to assign pkt_meta when receiving outgoing ARP and NS packets */
 
 	bool create_tunnels_at_startup; //!< Create PSP tunnels at startup vs. on demand
 	bool show_sampled_packets;	//!< Display to the console any packets marked for sampling
@@ -173,6 +183,8 @@ struct psp_gw_app_config {
 	uint16_t print_perf_flags;	//!< Print performance information to the console
 	enum doca_flow_l3_type outer;	//!< Indicate outer tunnel IP type
 	bool multithreaded;             //!<Parallel initialization when enabled
+	struct rte_hash *ip6_table;         /* Hash table with ipv6 addressess */
+	std::vector<entries_status> status; /* Status variable for entries process per queue */
 };
 
 #endif // _PSP_GW_CONFIG_H_
